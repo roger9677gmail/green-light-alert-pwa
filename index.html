@@ -10,7 +10,7 @@
     <title>綠燈提醒</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="./icon.svg" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=1.2.0" />
   </head>
   <body>
     <main class="app-shell" aria-live="polite">
@@ -32,7 +32,7 @@
 
         <header class="topbar">
           <div>
-            <p class="eyebrow">iPhone PWA</p>
+            <p class="eyebrow">iPhone PWA <span id="versionLabel">v--</span></p>
             <h1>綠燈提醒</h1>
           </div>
           <span id="stateBadge" class="state-badge idle">待機</span>
@@ -110,6 +110,6 @@
       </section>
     </main>
 
-    <script src="./app.js" type="module"></script>
+    <script src="./app.js?v=1.2.0" type="module"></script>
   </body>
 </html>

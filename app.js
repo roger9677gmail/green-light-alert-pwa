@@ -1,5 +1,7 @@
 const $ = (id) => document.getElementById(id);
 
+const APP_VERSION = "1.2.0";
+
 const els = {
   video: $("camera"),
   canvas: $("analysisCanvas"),
@@ -7,6 +9,7 @@ const els = {
   flash: $("flash"),
   demoLight: $("demoLight"),
   stateBadge: $("stateBadge"),
+  versionLabel: $("versionLabel"),
   startBtn: $("startBtn"),
   testBtn: $("testBtn"),
   redMeter: $("redMeter"),
@@ -31,6 +34,7 @@ const state = {
   stream: null,
   rafId: 0,
   audio: null,
+  mediaTone: null,
   wakeLock: null,
   audioUnlocked: false,
   greenStreak: 0,
@@ -52,6 +56,7 @@ const statusText = {
 init();
 
 function init() {
+  els.versionLabel.textContent = `v${APP_VERSION}`;
   registerServiceWorker();
   detectFeedbackSupport();
   bindControls();
@@ -63,7 +68,7 @@ function bindControls() {
   els.startBtn.addEventListener("click", toggleDetection);
   els.testBtn.addEventListener("click", async () => {
     await unlockAudio();
-    triggerAlert("測試提醒");
+    triggerAlert("測試提醒", { userGesture: true });
   });
   els.notifyToggle.addEventListener("change", requestNotificationPermission);
   els.demoToggle.addEventListener("change", () => {
@@ -276,7 +281,7 @@ function rgbToHue(r, g, b, max, delta) {
   return (hue * 60 + 360) % 360;
 }
 
-function triggerAlert(label) {
+function triggerAlert(label, options = {}) {
   const now = Date.now();
   if (now - state.lastAlertAt < 2600 && label !== "測試提醒") return;
   state.lastAlertAt = now;
@@ -287,7 +292,7 @@ function triggerAlert(label) {
   els.flash.classList.add("active");
 
   if (els.soundToggle.checked) {
-    playTone();
+    playTone(options);
   }
   if (els.vibrateToggle.checked) {
     if ("vibrate" in navigator) {
@@ -303,31 +308,40 @@ function triggerAlert(label) {
 
 async function unlockAudio() {
   const AudioCtor = window.AudioContext || window.webkitAudioContext;
-  if (!AudioCtor) {
+  prepareMediaTone();
+
+  if (!AudioCtor && !state.mediaTone) {
     els.soundToggle.checked = false;
     els.soundToggle.disabled = true;
     return false;
   }
 
-  if (!state.audio) {
+  if (AudioCtor && !state.audio) {
     state.audio = new AudioCtor();
   }
 
   try {
-    if (state.audio.state === "suspended") {
+    if (state.audio && state.audio.state === "suspended") {
       await state.audio.resume();
     }
-    primeAudio();
+    primeAudioContext();
     state.audioUnlocked = true;
     return true;
   } catch {
-    state.audioUnlocked = false;
-    return false;
+    state.audioUnlocked = Boolean(state.mediaTone);
+    return state.audioUnlocked;
   }
 }
 
-function playTone() {
-  if (!state.audio || !state.audioUnlocked) return;
+function playTone(options = {}) {
+  const playedMedia = playMediaTone(options.userGesture);
+
+  if (!state.audio || !state.audioUnlocked) {
+    if (!playedMedia) {
+      setMessage("音效尚未被 iPhone 啟用。請把音量調高，關閉靜音鍵，再按「測試提醒」。");
+    }
+    return;
+  }
 
   const audio = state.audio;
   const now = audio.currentTime;
@@ -345,7 +359,40 @@ function playTone() {
   });
 }
 
-function primeAudio() {
+function prepareMediaTone() {
+  if (state.mediaTone) return;
+
+  state.mediaTone = new Audio(buildBeepDataUrl());
+  state.mediaTone.preload = "auto";
+  state.mediaTone.playsInline = true;
+  state.mediaTone.volume = 1;
+}
+
+function playMediaTone(userGesture = false) {
+  if (!state.mediaTone) return false;
+
+  try {
+    state.mediaTone.pause();
+    state.mediaTone.currentTime = 0;
+    const playPromise = state.mediaTone.play();
+    if (playPromise) {
+      playPromise
+        .then(() => {
+          state.audioUnlocked = true;
+        })
+        .catch(() => {
+          if (userGesture) {
+            setMessage("iPhone 沒有播放音效。請確認音量、靜音鍵，並從主畫面 PWA 重新開啟後再測試。");
+          }
+        });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function primeAudioContext() {
   if (!state.audio) return;
 
   const audio = state.audio;
@@ -357,9 +404,57 @@ function primeAudio() {
   oscillator.stop(audio.currentTime + 0.035);
 }
 
+function buildBeepDataUrl() {
+  const sampleRate = 22050;
+  const seconds = 0.72;
+  const samples = Math.floor(sampleRate * seconds);
+  const dataBytes = samples * 2;
+  const buffer = new ArrayBuffer(44 + dataBytes);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataBytes, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, dataBytes, true);
+
+  for (let i = 0; i < samples; i += 1) {
+    const t = i / sampleRate;
+    const phase = t % 0.24;
+    const toneIndex = Math.floor(t / 0.24);
+    const frequency = toneIndex === 1 ? 1175 : 932;
+    const active = phase < 0.16;
+    const envelope = active ? Math.min(1, phase / 0.015) * Math.min(1, (0.16 - phase) / 0.025) : 0;
+    const value = Math.sin(2 * Math.PI * frequency * t) * envelope * 0.86;
+    view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, value)) * 32767, true);
+  }
+
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+
+  return `data:audio/wav;base64,${btoa(binary)}`;
+}
+
+function writeAscii(view, offset, text) {
+  for (let i = 0; i < text.length; i += 1) {
+    view.setUint8(offset + i, text.charCodeAt(i));
+  }
+}
+
 function detectFeedbackSupport() {
   const AudioCtor = window.AudioContext || window.webkitAudioContext;
-  if (!AudioCtor) {
+  if (!AudioCtor && !window.HTMLAudioElement) {
     els.soundToggle.checked = false;
     els.soundToggle.disabled = true;
     els.soundToggle.closest(".switch").classList.add("disabled");
