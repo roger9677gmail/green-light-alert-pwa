@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.3.0";
 
 const els = {
   video: $("camera"),
@@ -27,6 +27,7 @@ const els = {
   vibrateToggle: $("vibrateToggle"),
   notifyToggle: $("notifyToggle"),
   demoToggle: $("demoToggle"),
+  farToggle: $("farToggle"),
 };
 
 const state = {
@@ -38,6 +39,7 @@ const state = {
   wakeLock: null,
   audioUnlocked: false,
   greenStreak: 0,
+  redStreak: 0,
   lastAlertAt: 0,
   demoPhase: "red",
   demoLastFlip: 0,
@@ -77,6 +79,10 @@ function bindControls() {
     setMessage(els.demoToggle.checked ? "模擬模式已開啟，可測試紅燈轉綠燈提醒。" : "請固定手機，讓框線只包住紅綠燈。");
     updateDemoVisual(performance.now());
   });
+  els.farToggle.addEventListener("change", () => {
+    els.demoLight.classList.toggle("far", els.farToggle.checked);
+    setMessage(els.farToggle.checked ? "遠距模式會尋找框內的小型高亮綠色光點。" : "標準模式會用較大的號誌區域平均判斷。");
+  });
 
   [els.roiX, els.roiY, els.roiW, els.roiH].forEach((input) => {
     input.addEventListener("input", updateRoiFromControls);
@@ -97,6 +103,7 @@ async function toggleDetection() {
 
   state.running = true;
   state.greenStreak = 0;
+  state.redStreak = 0;
   state.lastAlertAt = 0;
   els.startBtn.textContent = "停止偵測";
   const audioReady = await unlockAudio();
@@ -146,6 +153,7 @@ function stopDetection() {
   releaseWakeLock();
   els.startBtn.textContent = "開始偵測";
   state.greenStreak = 0;
+  state.redStreak = 0;
   updateMeters(0, 0);
   setStatus("idle");
   setMessage("偵測已停止。");
@@ -173,6 +181,7 @@ function analyzeFrame(now = performance.now()) {
 
   if (hasGreen) {
     state.greenStreak += 1;
+    state.redStreak = 0;
     setStatus("green");
     if (state.greenStreak >= holdFrames) {
       triggerAlert("綠燈了");
@@ -180,7 +189,8 @@ function analyzeFrame(now = performance.now()) {
     }
   } else {
     state.greenStreak = 0;
-    setStatus(hasRed ? "red" : els.demoToggle.checked ? "demo" : "watching");
+    state.redStreak = hasRed ? state.redStreak + 1 : 0;
+    setStatus(state.redStreak > 2 ? "red" : els.demoToggle.checked ? "demo" : "watching");
   }
 
   state.rafId = requestAnimationFrame(analyzeFrame);
@@ -209,8 +219,10 @@ function analyzeCamera() {
     h: Math.round(state.roi.h * sampleHeight),
   };
 
-  const pixels = ctx.getImageData(roi.x, roi.y, roi.w, roi.h).data;
-  return scorePixels(pixels);
+  const imageData = ctx.getImageData(roi.x, roi.y, roi.w, roi.h);
+  return els.farToggle.checked
+    ? scoreSmallSignalPixels(imageData.data, roi.w, roi.h)
+    : scoreAveragePixels(imageData.data);
 }
 
 function analyzeDemo(now) {
@@ -223,11 +235,12 @@ function analyzeDemo(now) {
   }
 
   updateDemoVisual(now);
-  return state.demoPhase === "green" ? { red: 5, green: 86 } : { red: 82, green: 6 };
+  return state.demoPhase === "green" ? { red: 4, green: 78 } : { red: 76, green: 5 };
 }
 
 function updateDemoVisual(now) {
   els.demoLight.classList.toggle("active", els.demoToggle.checked);
+  els.demoLight.classList.toggle("far", els.farToggle.checked);
   els.demoLight.classList.toggle("red-on", state.demoPhase === "red");
   els.demoLight.classList.toggle("green-on", state.demoPhase === "green");
 
@@ -236,7 +249,7 @@ function updateDemoVisual(now) {
   }
 }
 
-function scorePixels(pixels) {
+function scoreAveragePixels(pixels) {
   let red = 0;
   let green = 0;
   let useful = 0;
@@ -270,6 +283,76 @@ function scorePixels(pixels) {
     red: Math.min(100, Math.round(red / useful)),
     green: Math.min(100, Math.round(green / useful)),
   };
+}
+
+function scoreSmallSignalPixels(pixels, width, height) {
+  const cellsX = 12;
+  const cellsY = 12;
+  const redCells = new Float32Array(cellsX * cellsY);
+  const greenCells = new Float32Array(cellsX * cellsY);
+  const redCounts = new Uint16Array(cellsX * cellsY);
+  const greenCounts = new Uint16Array(cellsX * cellsY);
+  let redTotal = 0;
+  let greenTotal = 0;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = (y * width + x) * 4;
+      const r = pixels[i];
+      const g = pixels[i + 1];
+      const b = pixels[i + 2];
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const delta = max - min;
+
+      if (max < 42 || delta < 18) continue;
+
+      const sat = delta / max;
+      const val = max / 255;
+      if (sat < 0.28 || val < 0.18) continue;
+
+      const hue = rgbToHue(r, g, b, max, delta);
+      const weight = Math.pow(sat, 1.25) * Math.pow(val, 1.1) * 100;
+      const cx = Math.min(cellsX - 1, Math.floor((x / width) * cellsX));
+      const cy = Math.min(cellsY - 1, Math.floor((y / height) * cellsY));
+      const cell = cy * cellsX + cx;
+
+      if (hue <= 28 || hue >= 334) {
+        redCells[cell] += weight;
+        redCounts[cell] += 1;
+        redTotal += 1;
+      } else if (hue >= 68 && hue <= 188) {
+        greenCells[cell] += weight;
+        greenCounts[cell] += 1;
+        greenTotal += 1;
+      }
+    }
+  }
+
+  return {
+    red: scoreColorCells(redCells, redCounts, redTotal),
+    green: scoreColorCells(greenCells, greenCounts, greenTotal),
+  };
+}
+
+function scoreColorCells(cells, counts, totalCount) {
+  if (!totalCount) return 0;
+
+  const scores = [];
+  for (let i = 0; i < cells.length; i += 1) {
+    if (!counts[i]) continue;
+    const average = cells[i] / counts[i];
+    const clusterBonus = Math.min(18, Math.sqrt(counts[i]) * 4);
+    scores.push(Math.min(100, average + clusterBonus));
+  }
+
+  scores.sort((a, b) => b - a);
+  const top = scores.slice(0, 4);
+  const topAverage = top.reduce((sum, value) => sum + value, 0) / top.length;
+  const confidence = Math.min(1, totalCount / 10);
+  const presenceBonus = Math.min(16, Math.sqrt(totalCount) * 3);
+
+  return Math.min(100, Math.round(topAverage * (0.44 + confidence * 0.42) + presenceBonus));
 }
 
 function rgbToHue(r, g, b, max, delta) {

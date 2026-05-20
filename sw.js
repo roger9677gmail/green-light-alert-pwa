@@ -1,9 +1,9 @@
-const CACHE_NAME = "green-light-alert-v4";
+const CACHE_NAME = "green-light-alert-v5";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=1.2.0",
-  "./app.js?v=1.2.0",
+  "./styles.css?v=1.3.0",
+  "./app.js?v=1.3.0",
   "./manifest.webmanifest",
   "./icon.svg",
 ];
