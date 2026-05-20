@@ -1,4 +1,4 @@
-const CACHE_NAME = "green-light-alert-v2";
+const CACHE_NAME = "green-light-alert-v3";
 const ASSETS = [
   "./",
   "./index.html",

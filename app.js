@@ -32,6 +32,7 @@ const state = {
   rafId: 0,
   audio: null,
   wakeLock: null,
+  audioUnlocked: false,
   greenStreak: 0,
   lastAlertAt: 0,
   demoPhase: "red",
@@ -52,6 +53,7 @@ init();
 
 function init() {
   registerServiceWorker();
+  detectFeedbackSupport();
   bindControls();
   updateRoiFromControls();
   setStatus("idle");
@@ -59,7 +61,10 @@ function init() {
 
 function bindControls() {
   els.startBtn.addEventListener("click", toggleDetection);
-  els.testBtn.addEventListener("click", () => triggerAlert("測試提醒"));
+  els.testBtn.addEventListener("click", async () => {
+    await unlockAudio();
+    triggerAlert("測試提醒");
+  });
   els.notifyToggle.addEventListener("change", requestNotificationPermission);
   els.demoToggle.addEventListener("change", () => {
     stopCameraStream();
@@ -89,7 +94,7 @@ async function toggleDetection() {
   state.greenStreak = 0;
   state.lastAlertAt = 0;
   els.startBtn.textContent = "停止偵測";
-  await unlockAudio();
+  const audioReady = await unlockAudio();
 
   if (!els.demoToggle.checked) {
     try {
@@ -105,6 +110,9 @@ async function toggleDetection() {
 
   await requestWakeLock();
   setStatus(els.demoToggle.checked ? "demo" : "watching");
+  if (els.soundToggle.checked && !audioReady) {
+    setMessage("音效無法啟用。請確認 iPhone 音量、靜音鍵，或再按一次「測試提醒」。");
+  }
   analyzeFrame();
 }
 
@@ -278,9 +286,15 @@ function triggerAlert(label) {
   void els.flash.offsetWidth;
   els.flash.classList.add("active");
 
-  if (els.soundToggle.checked) playTone();
-  if (els.vibrateToggle.checked && "vibrate" in navigator) {
-    navigator.vibrate([160, 70, 160, 70, 260]);
+  if (els.soundToggle.checked) {
+    playTone();
+  }
+  if (els.vibrateToggle.checked) {
+    if ("vibrate" in navigator) {
+      navigator.vibrate([160, 70, 160, 70, 260]);
+    } else {
+      setMessage(`${label}。此 iPhone 瀏覽器不支援網頁震動，請使用聲音提醒。`);
+    }
   }
   if (els.notifyToggle.checked && Notification.permission === "granted") {
     new Notification("綠燈提醒", { body: "可能已轉綠燈，請確認路況。" });
@@ -288,16 +302,32 @@ function triggerAlert(label) {
 }
 
 async function unlockAudio() {
-  if (!state.audio) {
-    state.audio = new AudioContext();
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) {
+    els.soundToggle.checked = false;
+    els.soundToggle.disabled = true;
+    return false;
   }
-  if (state.audio.state === "suspended") {
-    await state.audio.resume();
+
+  if (!state.audio) {
+    state.audio = new AudioCtor();
+  }
+
+  try {
+    if (state.audio.state === "suspended") {
+      await state.audio.resume();
+    }
+    primeAudio();
+    state.audioUnlocked = true;
+    return true;
+  } catch {
+    state.audioUnlocked = false;
+    return false;
   }
 }
 
 function playTone() {
-  if (!state.audio) return;
+  if (!state.audio || !state.audioUnlocked) return;
 
   const audio = state.audio;
   const now = audio.currentTime;
@@ -313,6 +343,35 @@ function playTone() {
     oscillator.start(now + offset);
     oscillator.stop(now + offset + 0.16);
   });
+}
+
+function primeAudio() {
+  if (!state.audio) return;
+
+  const audio = state.audio;
+  const oscillator = audio.createOscillator();
+  const gain = audio.createGain();
+  gain.gain.setValueAtTime(0.0001, audio.currentTime);
+  oscillator.connect(gain).connect(audio.destination);
+  oscillator.start(audio.currentTime);
+  oscillator.stop(audio.currentTime + 0.035);
+}
+
+function detectFeedbackSupport() {
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) {
+    els.soundToggle.checked = false;
+    els.soundToggle.disabled = true;
+    els.soundToggle.closest(".switch").classList.add("disabled");
+  }
+
+  if (!("vibrate" in navigator)) {
+    els.vibrateToggle.checked = false;
+    els.vibrateToggle.disabled = true;
+    const label = els.vibrateToggle.closest(".switch");
+    label.classList.add("disabled");
+    label.querySelector("span").textContent = "震動不可用";
+  }
 }
 
 async function requestWakeLock() {

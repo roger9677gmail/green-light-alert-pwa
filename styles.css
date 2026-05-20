@@ -360,6 +360,10 @@ input[type="range"] {
   accent-color: var(--green);
 }
 
+.switch.disabled {
+  opacity: 0.52;
+}
+
 .message {
   min-height: 36px;
   margin: 0;
