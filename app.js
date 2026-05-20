@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.4.0";
 
 const els = {
   video: $("camera"),
@@ -38,6 +38,7 @@ const state = {
   mediaTone: null,
   wakeLock: null,
   audioUnlocked: false,
+  reloadingForUpdate: false,
   greenStreak: 0,
   redStreak: 0,
   lastAlertAt: 0,
@@ -622,8 +623,42 @@ function setMessage(text) {
 
 function registerServiceWorker() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js").catch(() => {
-      setMessage("離線快取尚未啟用，但偵測功能仍可使用。");
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (state.reloadingForUpdate) return;
+      state.reloadingForUpdate = true;
+      setMessage("新版已載入，正在重新整理。");
+      window.location.reload();
     });
+
+    navigator.serviceWorker
+      .register(`./sw.js?v=${APP_VERSION}`)
+      .then((registration) => {
+        if (registration.waiting) {
+          activateUpdatedWorker(registration.waiting);
+        }
+
+        registration.addEventListener("updatefound", () => {
+          const worker = registration.installing;
+          if (!worker) return;
+
+          worker.addEventListener("statechange", () => {
+            if (worker.state === "installed" && navigator.serviceWorker.controller) {
+              activateUpdatedWorker(worker);
+            }
+          });
+        });
+
+        if (navigator.onLine) {
+          registration.update();
+        }
+      })
+      .catch(() => {
+        setMessage("離線快取尚未啟用，但偵測功能仍可使用。");
+      });
   }
+}
+
+function activateUpdatedWorker(worker) {
+  setMessage("偵測到新版，正在更新。");
+  worker.postMessage({ type: "SKIP_WAITING" });
 }

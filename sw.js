@@ -1,9 +1,9 @@
-const CACHE_NAME = "green-light-alert-v5";
+const CACHE_NAME = "green-light-alert-v6";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=1.3.0",
-  "./app.js?v=1.3.0",
+  "./styles.css?v=1.4.0",
+  "./app.js?v=1.4.0",
   "./manifest.webmanifest",
   "./icon.svg",
 ];
@@ -22,6 +22,12 @@ self.addEventListener("activate", (event) => {
       ),
   );
   self.clients.claim();
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener("fetch", (event) => {
