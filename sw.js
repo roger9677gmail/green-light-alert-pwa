@@ -1,11 +1,12 @@
-const CACHE_NAME = "front-car-alert-v24";
+const CACHE_NAME = "front-car-alert-v25";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=2.8.4",
-  "./app.js?v=2.8.4",
+  "./styles.css?v=2.8.5",
+  "./app.js?v=2.8.5",
   "./manifest.webmanifest",
   "./icon.svg",
+  "./ads.txt",
 ];
 
 self.addEventListener("install", (event) => {
