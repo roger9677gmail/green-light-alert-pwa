@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.2.0";
 
 const els = {
   video: $("camera"),
@@ -14,8 +14,10 @@ const els = {
   testBtn: $("testBtn"),
   redMeter: $("redMeter"),
   greenMeter: $("greenMeter"),
+  stopMeter: $("stopMeter"),
   redValue: $("redValue"),
   greenValue: $("greenValue"),
+  stopValue: $("stopValue"),
   message: $("message"),
   sensitivity: $("sensitivity"),
   holdFrames: $("holdFrames"),
@@ -49,6 +51,7 @@ const state = {
   roi: { x: 0.22, y: 0.16, w: 0.56, h: 0.34 },
   smoothed: { motion: 0, global: 0 },
   baseline: { motion: 0, global: 0, samples: 0 },
+  stoppedSeconds: 0,
 };
 
 const statusText = {
@@ -197,6 +200,7 @@ function analyzeFrame(now = performance.now()) {
     if (derived.isStopped) {
       if (!state.stoppedSince) state.stoppedSince = now;
       const stoppedMs = now - state.stoppedSince;
+      updateStopSeconds(stoppedMs / 1000);
       setStatus(stoppedMs >= stopSeconds * 1000 ? "armed" : "stable");
       setMessage(`停止穩定 ${Math.min(stopSeconds, Math.floor(stoppedMs / 1000))}/${stopSeconds} 秒。`);
       if (stoppedMs >= stopSeconds * 1000) {
@@ -206,6 +210,7 @@ function analyzeFrame(now = performance.now()) {
       }
     } else {
       state.stoppedSince = 0;
+      updateStopSeconds(0);
       setStatus(els.demoToggle.checked ? "demo" : "watching");
       setMessage("監看中。車身或前車尚未穩定停止。");
     }
@@ -215,9 +220,11 @@ function analyzeFrame(now = performance.now()) {
     state.alertHoldUntil = now + 3200;
     state.armed = false;
     state.stoppedSince = 0;
+    updateStopSeconds(0);
   } else {
     setStatus("armed");
-    setMessage("已待提醒。前車移動時會發出提示。");
+    updateStopSeconds(state.stoppedSince ? (now - state.stoppedSince) / 1000 : 0);
+    setMessage(`已停止 ${state.stoppedSeconds} 秒，前車移動時會提示。`);
   }
 
   state.rafId = requestAnimationFrame(analyzeFrame);
@@ -228,7 +235,7 @@ function analyzeCamera() {
   const videoHeight = els.video.videoHeight;
 
   if (!videoWidth || !videoHeight) {
-    return { red: 0, green: 0 };
+    return { stability: 0, motion: 0, globalMotion: 0 };
   }
 
   const sampleWidth = 240;
@@ -346,12 +353,14 @@ function smoothMotionMetrics(metrics) {
 function deriveMotionState(metrics, sensitivity, tolerance) {
   const baselineMotion = state.baseline.samples ? state.baseline.motion : metrics.globalMotion;
   const baselineGlobal = state.baseline.samples ? state.baseline.global : metrics.globalMotion;
-  const engineMotion = Math.max(metrics.globalMotion, baselineGlobal, baselineMotion * 0.85);
+  const engineMotion = Math.max(metrics.globalMotion, baselineGlobal, baselineMotion * 0.9);
   const relativeMotion = Math.max(0, metrics.motion - engineMotion);
   const mismatch = Math.abs(metrics.motion - metrics.globalMotion);
   const moveThreshold = Math.max(12, 58 - sensitivity * 0.46);
-  const stoppedByBaseline = metrics.globalMotion <= baselineGlobal + tolerance && metrics.motion <= baselineMotion + tolerance;
-  const stoppedBySharedShake = mismatch <= tolerance && metrics.globalMotion <= tolerance + 18;
+  const stoppedByBaseline =
+    metrics.globalMotion <= baselineGlobal + tolerance * 1.2 &&
+    metrics.motion <= baselineMotion + tolerance * 1.2;
+  const stoppedBySharedShake = mismatch <= tolerance * 1.15 && metrics.globalMotion <= tolerance + 34;
   const isStopped = stoppedByBaseline || stoppedBySharedShake;
   const frontMotion = Math.min(100, Math.round(relativeMotion * 1.45));
 
@@ -364,8 +373,8 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
 }
 
 function learnVibrationBaseline(metrics, tolerance) {
-  const sharedShake = Math.abs(metrics.motion - metrics.globalMotion) <= tolerance + 4;
-  const reasonableShake = metrics.motion <= tolerance + 24 && metrics.globalMotion <= tolerance + 24;
+  const sharedShake = Math.abs(metrics.motion - metrics.globalMotion) <= tolerance * 1.15 + 4;
+  const reasonableShake = metrics.motion <= tolerance + 38 && metrics.globalMotion <= tolerance + 38;
   if (!sharedShake || !reasonableShake) return;
 
   const alpha = state.baseline.samples < 8 ? 0.35 : 0.08;
@@ -390,6 +399,7 @@ function resetMotionState() {
   state.baseline.motion = 0;
   state.baseline.global = 0;
   state.baseline.samples = 0;
+  updateStopSeconds(0);
 }
 
 function scoreAveragePixels(pixels) {
@@ -752,6 +762,15 @@ function updateMeters(red, green) {
   els.greenMeter.value = green;
   els.redValue.textContent = red;
   els.greenValue.textContent = green;
+}
+
+function updateStopSeconds(seconds) {
+  const rounded = Math.max(0, Math.floor(seconds));
+  state.stoppedSeconds = rounded;
+  const target = Math.max(1, Number(els.holdFrames.value));
+  els.stopMeter.max = String(Math.max(target, rounded));
+  els.stopMeter.value = String(Math.min(rounded, Number(els.stopMeter.max)));
+  els.stopValue.textContent = `${rounded}秒`;
 }
 
 function setStatus(status) {
