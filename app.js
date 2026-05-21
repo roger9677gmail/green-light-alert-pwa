@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.7.2";
+const APP_VERSION = "2.8.0";
 
 const els = {
   video: $("camera"),
@@ -16,7 +16,9 @@ const els = {
   startBtn: $("startBtn"),
   testBtn: $("testBtn"),
   settingsBtn: $("settingsBtn"),
+  aboutBtn: $("aboutBtn"),
   settingsPanel: $("settingsPanel"),
+  aboutPanel: $("aboutPanel"),
   redMeter: $("redMeter"),
   greenMeter: $("greenMeter"),
   stopMeter: $("stopMeter"),
@@ -36,9 +38,6 @@ const els = {
   notifyToggle: $("notifyToggle"),
   demoToggle: $("demoToggle"),
   autoToggle: $("autoToggle"),
-  pageButtons: document.querySelectorAll(".tab-btn"),
-  guidePage: $("guidePage"),
-  privacyPage: $("privacyPage"),
 };
 
 const state = {
@@ -79,7 +78,6 @@ function init() {
   registerServiceWorker();
   detectFeedbackSupport();
   bindControls();
-  bindPageTabs();
   setRoi(state.roi);
   observeResponsiveLayout();
   setStatus("idle");
@@ -92,6 +90,7 @@ function bindControls() {
     triggerAlert("測試提醒", { userGesture: true });
   });
   els.settingsBtn.addEventListener("click", toggleSettings);
+  els.aboutBtn.addEventListener("click", toggleAbout);
   els.notifyToggle.addEventListener("change", requestNotificationPermission);
   els.demoToggle.addEventListener("change", () => {
     stopCameraStream();
@@ -122,31 +121,33 @@ function toggleSettings() {
   els.settingsPanel.hidden = !shouldOpen;
   els.settingsBtn.setAttribute("aria-expanded", String(shouldOpen));
   els.settingsBtn.textContent = shouldOpen ? "收合設定" : "功能設定";
-}
 
-function bindPageTabs() {
-  els.pageButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      switchPage(button.dataset.page || "home");
-    });
-  });
-}
-
-function switchPage(page) {
-  const nextPage = page === "guide" || page === "privacy" ? page : "home";
-  els.shell.dataset.page = nextPage;
-  els.pageButtons.forEach((button) => {
-    const isActive = button.dataset.page === nextPage;
-    button.classList.toggle("active", isActive);
-    button.setAttribute("aria-current", isActive ? "page" : "false");
-  });
-
-  els.guidePage.hidden = nextPage !== "guide";
-  els.privacyPage.hidden = nextPage !== "privacy";
-
-  if (nextPage !== "home" && !els.settingsPanel.hidden) {
-    toggleSettings();
+  if (shouldOpen && !els.aboutPanel.hidden) {
+    closeAbout();
   }
+}
+
+function toggleAbout() {
+  const shouldOpen = els.aboutPanel.hidden;
+  els.aboutPanel.hidden = !shouldOpen;
+  els.aboutBtn.setAttribute("aria-expanded", String(shouldOpen));
+  els.aboutBtn.textContent = shouldOpen ? "關閉" : "關於";
+
+  if (shouldOpen && !els.settingsPanel.hidden) {
+    closeSettings();
+  }
+}
+
+function closeSettings() {
+  els.settingsPanel.hidden = true;
+  els.settingsBtn.setAttribute("aria-expanded", "false");
+  els.settingsBtn.textContent = "功能設定";
+}
+
+function closeAbout() {
+  els.aboutPanel.hidden = true;
+  els.aboutBtn.setAttribute("aria-expanded", "false");
+  els.aboutBtn.textContent = "關於";
 }
 
 function observeResponsiveLayout() {
@@ -178,7 +179,8 @@ async function toggleDetection() {
 
   state.running = true;
   els.shell.classList.add("running");
-  switchPage("home");
+  closeSettings();
+  closeAbout();
   updateLayoutMetrics();
   resetMotionState();
   state.lastAlertAt = 0;
@@ -192,7 +194,7 @@ async function toggleDetection() {
       state.running = false;
       els.shell.classList.remove("running");
       updateLayoutMetrics();
-      els.startBtn.textContent = "前車提醒偵測";
+      els.startBtn.textContent = "前車偵測";
       setStatus("idle");
       setMessage(`相機無法啟動：${error.message || "請確認權限與 HTTPS"}`);
       return;
@@ -231,7 +233,7 @@ function stopDetection() {
   cancelAnimationFrame(state.rafId);
   stopCameraStream();
   releaseWakeLock();
-  els.startBtn.textContent = "前車提醒偵測";
+  els.startBtn.textContent = "前車偵測";
   resetMotionState();
   updateMeters(0, 0);
   setStatus("idle");

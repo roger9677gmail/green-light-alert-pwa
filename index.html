@@ -10,7 +10,7 @@
     <title>前車提醒</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="./icon.svg" />
-    <link rel="stylesheet" href="./styles.css?v=2.7.2" />
+    <link rel="stylesheet" href="./styles.css?v=2.8.0" />
   </head>
   <body>
     <main class="app-shell" aria-live="polite">
@@ -39,20 +39,6 @@
           </div>
           <span id="stateBadge" class="state-badge idle">待機</span>
         </header>
-      </section>
-
-      <section id="guidePage" class="info-panel app-page" aria-label="使用教學" hidden>
-        <h1>使用教學</h1>
-        <p>把 iPhone 固定在不遮擋視線的位置，讓偵測框包住前車尾部或車身中心。</p>
-        <p>停等時保持 PWA 在前景，按下「前車提醒偵測」。停穩達設定秒數後，前車移動會發出提示。</p>
-        <p>偵測框可以用手指拖曳，也可以拉角落改變大小。此工具只作輔助提醒，起步前仍需確認號誌、行人與周遭路況。</p>
-      </section>
-
-      <section id="privacyPage" class="info-panel app-page" aria-label="隱私權政策" hidden>
-        <h1>隱私權政策</h1>
-        <p>本 PWA 會在你按下偵測後使用相機畫面進行本機即時分析，用來判斷前車是否移動。</p>
-        <p>目前版本不會把相機影像上傳到伺服器，也不會儲存影像。若未來加入 Google AdSense，廣告服務可能依 Google 的政策使用 Cookie 或裝置資訊提供廣告與成效統計。</p>
-        <p>你可以隨時停止偵測、關閉相機權限，或移除主畫面上的 PWA。</p>
       </section>
 
       <section class="readout-panel" aria-label="偵測狀態">
@@ -117,26 +103,24 @@
           </div>
         </div>
 
+        <section id="aboutPanel" class="about-panel" aria-label="關於" hidden>
+          <h1>關於</h1>
+          <h2>使用教學</h2>
+          <p>把 iPhone 固定在不遮擋視線的位置，讓偵測框包住前車尾部或車身中心。</p>
+          <p>停等時保持 PWA 在前景，按下「前車偵測」。停穩達設定秒數後，前車移動會發出提示。</p>
+          <p>偵測框可以用手指拖曳，也可以拉角落改變大小。此工具只作輔助提醒，起步前仍需確認號誌、行人與周遭路況。</p>
+          <h2>隱私權政策</h2>
+          <p>本 PWA 會在你按下偵測後使用相機畫面進行本機即時分析，用來判斷前車是否移動。</p>
+          <p>目前版本不會把相機影像上傳到伺服器，也不會儲存影像。若未來加入 Google AdSense，廣告服務可能依 Google 的政策使用 Cookie 或裝置資訊提供廣告與成效統計。</p>
+          <p>你可以隨時停止偵測、關閉相機權限，或移除主畫面上的 PWA。</p>
+        </section>
+
         <div class="primary-actions">
-          <button id="startBtn" class="primary" type="button">前車提醒偵測</button>
+          <button id="startBtn" class="primary" type="button">前車偵測</button>
           <button id="testBtn" type="button">測試提醒</button>
           <button id="settingsBtn" type="button" aria-expanded="false" aria-controls="settingsPanel">功能設定</button>
+          <button id="aboutBtn" type="button" aria-expanded="false" aria-controls="aboutPanel">關於</button>
         </div>
-
-        <nav class="page-tabs" aria-label="頁面切換">
-          <button class="tab-btn active" type="button" data-page="home" aria-current="page">
-            <span class="tab-icon" aria-hidden="true">⌂</span>
-            <span>首頁</span>
-          </button>
-          <button class="tab-btn" type="button" data-page="guide">
-            <span class="tab-icon" aria-hidden="true">?</span>
-            <span>使用教學</span>
-          </button>
-          <button class="tab-btn" type="button" data-page="privacy">
-            <span class="tab-icon" aria-hidden="true">□</span>
-            <span>隱私權政策</span>
-          </button>
-        </nav>
 
         <div id="adSlot" class="ad-slot" aria-label="廣告">
           <span>Google AdSense 廣告容器</span>
@@ -144,6 +128,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=2.7.2" type="module"></script>
+    <script src="./app.js?v=2.8.0" type="module"></script>
   </body>
 </html>

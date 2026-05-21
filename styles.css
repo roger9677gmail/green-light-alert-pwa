@@ -11,7 +11,7 @@
   --amber: #f8bd43;
   --blue: #5ab8ff;
   --shadow: rgba(0, 0, 0, 0.36);
-  --controls-height: 176px;
+  --controls-height: 116px;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
@@ -369,79 +369,6 @@ button:active {
   padding: 8px 14px 7px;
 }
 
-.page-tabs {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0;
-  min-height: 42px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  background: rgba(250, 250, 250, 0.94);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
-  overflow: hidden;
-}
-
-.tab-btn {
-  display: grid;
-  place-items: center;
-  gap: 2px;
-  min-height: 42px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: #8b94a3;
-  font-size: 0.68rem;
-  font-weight: 900;
-  line-height: 1.12;
-}
-
-.tab-icon {
-  display: block;
-  font-size: 0.98rem;
-  line-height: 1;
-}
-
-.tab-btn.active {
-  background: rgba(157, 24, 27, 0.08);
-  color: #9d181b;
-}
-
-.info-panel {
-  position: absolute;
-  top: calc(62px + env(safe-area-inset-top));
-  left: 14px;
-  right: 14px;
-  bottom: calc(var(--controls-height) + 10px);
-  z-index: 8;
-  display: block;
-  overflow-y: auto;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
-  background: rgba(18, 21, 25, 0.9);
-  padding: 16px;
-  box-shadow: 0 18px 56px rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(18px);
-  -webkit-overflow-scrolling: touch;
-}
-
-.info-panel[hidden] {
-  display: none;
-}
-
-.info-panel h1 {
-  margin: 0 0 12px;
-  color: var(--text);
-  font-size: 1.12rem;
-  letter-spacing: 0;
-}
-
-.info-panel p {
-  margin: 0 0 12px;
-  color: var(--muted);
-  font-size: 0.95rem;
-  line-height: 1.5;
-}
-
 .meter-row {
   display: grid;
   grid-template-columns: 28px 1fr 48px;
@@ -466,17 +393,22 @@ meter {
   gap: 6px;
   border-top: 0;
   background: linear-gradient(180deg, transparent, rgba(16, 17, 19, 0.86) 30%, rgba(16, 17, 19, 0.96));
-  padding: 8px 14px calc(8px + env(safe-area-inset-bottom));
+  padding: 8px 14px 0;
   min-height: 0;
   overflow: visible;
 }
 
 .primary-actions {
   display: grid;
-  grid-template-columns: 1.28fr 0.92fr 0.92fr;
-  gap: 8px;
+  grid-template-columns: 1.1fr 0.9fr 0.9fr 0.66fr;
+  gap: 6px;
   align-self: end;
   min-height: 0;
+}
+
+.primary-actions button {
+  padding-inline: 6px;
+  font-size: 0.86rem;
 }
 
 .primary {
@@ -489,24 +421,16 @@ meter {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 44px;
-  height: clamp(44px, 7dvh, 64px);
+  min-height: calc(46px + env(safe-area-inset-bottom));
+  height: calc(clamp(46px, 7dvh, 64px) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
   border: 1px dashed rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
+  border-radius: 8px 8px 0 0;
   background: rgba(255, 255, 255, 0.07);
   color: rgba(244, 241, 234, 0.64);
   font-size: 0.78rem;
   font-weight: 800;
   text-align: center;
-}
-
-.app-shell.running .page-tabs,
-.app-shell.running .ad-slot {
-  display: none;
-}
-
-.app-shell.running .controls {
-  gap: 0;
 }
 
 .control-grid {
@@ -515,14 +439,15 @@ meter {
   gap: 12px;
 }
 
-.settings-panel {
+.settings-panel,
+.about-panel {
   position: fixed;
   left: 14px;
   right: 14px;
-  bottom: calc(var(--controls-height) + 112px);
+  bottom: calc(var(--controls-height) + 10px);
   z-index: 12;
   width: min(calc(100vw - 28px), 402px);
-  max-height: min(44dvh, 360px);
+  max-height: min(56dvh, 460px);
   margin: 0 auto;
   display: grid;
   gap: 10px;
@@ -539,8 +464,32 @@ meter {
   -webkit-overflow-scrolling: touch;
 }
 
-.settings-panel[hidden] {
+.settings-panel[hidden],
+.about-panel[hidden] {
   display: none;
+}
+
+.about-panel h1,
+.about-panel h2 {
+  margin: 0;
+  color: var(--text);
+  letter-spacing: 0;
+}
+
+.about-panel h1 {
+  font-size: 1.08rem;
+}
+
+.about-panel h2 {
+  margin-top: 4px;
+  font-size: 0.92rem;
+}
+
+.about-panel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .control-grid label {
@@ -636,7 +585,8 @@ input[type="range"] {
     min-height: 0;
   }
 
-  .settings-panel {
+  .settings-panel,
+  .about-panel {
     left: 50%;
     right: auto;
     transform: translateX(-50%);
@@ -646,7 +596,7 @@ input[type="range"] {
 
 @media (max-height: 720px) {
   :root {
-    --controls-height: 108px;
+    --controls-height: 104px;
   }
 
   .control-grid label {
@@ -655,33 +605,20 @@ input[type="range"] {
   }
 
   .settings-panel {
-    bottom: calc(var(--controls-height) + 88px);
-    max-height: min(42dvh, 250px);
+    bottom: calc(var(--controls-height) + 8px);
+    max-height: min(50dvh, 300px);
     padding: 10px;
   }
 
-  .tab-btn {
-    min-height: 38px;
-    font-size: 0.64rem;
-  }
-
-  .page-tabs {
-    min-height: 38px;
-  }
-
-  .tab-icon {
-    font-size: 0.96rem;
-  }
-
-  .info-panel {
-    top: calc(56px + env(safe-area-inset-top));
+  .about-panel {
     bottom: calc(var(--controls-height) + 8px);
-    padding: 14px;
+    max-height: min(58dvh, 360px);
+    padding: 10px;
   }
 
   .ad-slot {
-    min-height: 36px;
-    height: 40px;
+    min-height: calc(38px + env(safe-area-inset-bottom));
+    height: calc(40px + env(safe-area-inset-bottom));
   }
 
   .switch {
@@ -691,5 +628,9 @@ input[type="range"] {
 
   button {
     min-height: 40px;
+  }
+
+  .primary-actions button {
+    font-size: 0.76rem;
   }
 }
