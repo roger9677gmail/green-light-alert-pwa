@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.8.2";
+const APP_VERSION = "2.8.3";
 
 const els = {
   video: $("camera"),
@@ -17,6 +17,7 @@ const els = {
   testBtn: $("testBtn"),
   settingsBtn: $("settingsBtn"),
   aboutBtn: $("aboutBtn"),
+  updateBtn: $("updateBtn"),
   settingsPanel: $("settingsPanel"),
   aboutPanel: $("aboutPanel"),
   redMeter: $("redMeter"),
@@ -91,6 +92,7 @@ function bindControls() {
   });
   els.settingsBtn.addEventListener("click", toggleSettings);
   els.aboutBtn.addEventListener("click", toggleAbout);
+  els.updateBtn.addEventListener("click", forceUpdateToLatest);
   els.notifyToggle.addEventListener("change", requestNotificationPermission);
   els.demoToggle.addEventListener("change", () => {
     stopCameraStream();
@@ -148,6 +150,39 @@ function closeAbout() {
   els.aboutPanel.hidden = true;
   els.aboutBtn.setAttribute("aria-expanded", "false");
   els.aboutBtn.textContent = "關於";
+}
+
+async function forceUpdateToLatest() {
+  setMessage("正在清除快取並檢查最新版。");
+  els.updateBtn.disabled = true;
+  els.updateBtn.textContent = "更新中";
+
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(
+        registrations.map(async (registration) => {
+          await registration.update();
+          if (registration.waiting) {
+            activateUpdatedWorker(registration.waiting);
+          }
+          return registration.unregister();
+        }),
+      );
+    }
+
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+  } catch {
+    setMessage("更新檢查未完全成功，仍會重新載入嘗試取得最新版。");
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set("v", APP_VERSION);
+  url.searchParams.set("refresh", Date.now().toString());
+  window.location.replace(url.toString());
 }
 
 function observeResponsiveLayout() {

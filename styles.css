@@ -492,6 +492,35 @@ meter {
   line-height: 1.45;
 }
 
+.about-version {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.about-version strong {
+  color: var(--text);
+}
+
+.update-btn {
+  width: 100%;
+  border-color: rgba(90, 184, 255, 0.36);
+  background: #1f2a34;
+  color: var(--text);
+}
+
+.update-btn:disabled {
+  opacity: 0.62;
+}
+
 .control-grid label {
   display: grid;
   gap: 7px;
