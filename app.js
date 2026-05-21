@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.8.6";
+const APP_VERSION = "2.8.7";
 
 const els = {
   video: $("camera"),
@@ -82,6 +82,7 @@ function init() {
   setRoi(state.roi);
   observeResponsiveLayout();
   setStatus("idle");
+  warnIfCameraBlockedByHttp();
 }
 
 function bindControls() {
@@ -207,6 +208,12 @@ function updateLayoutMetrics() {
 }
 
 async function toggleDetection() {
+  if (!isCameraSecureContext()) {
+    setStatus("idle");
+    setMessage("相機需要 HTTPS 才能啟動。請使用 https://9677.fun，或等待 GitHub Pages HTTPS 憑證完成。");
+    return;
+  }
+
   if (state.running) {
     stopDetection();
     return;
@@ -992,6 +999,20 @@ function setStatus(status) {
 
 function setMessage(text) {
   els.message.textContent = text;
+}
+
+function isCameraSecureContext() {
+  return (
+    window.isSecureContext ||
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+  );
+}
+
+function warnIfCameraBlockedByHttp() {
+  if (!isCameraSecureContext()) {
+    setMessage("目前不是 HTTPS，相機會被瀏覽器封鎖。請改用 https://9677.fun。");
+  }
 }
 
 function registerServiceWorker() {
