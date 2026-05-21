@@ -1,9 +1,9 @@
-const CACHE_NAME = "front-car-alert-v16";
+const CACHE_NAME = "front-car-alert-v17";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=2.6.2",
-  "./app.js?v=2.6.2",
+  "./styles.css?v=2.7.0",
+  "./app.js?v=2.7.0",
   "./manifest.webmanifest",
   "./icon.svg",
 ];

@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.6.2";
+const APP_VERSION = "2.7.0";
 
 const els = {
   video: $("camera"),
@@ -9,6 +9,8 @@ const els = {
   roiBox: $("roiBox"),
   flash: $("flash"),
   demoLight: $("demoLight"),
+  shell: document.querySelector(".app-shell"),
+  controls: document.querySelector(".controls"),
   stateBadge: $("stateBadge"),
   versionLabel: $("versionLabel"),
   startBtn: $("startBtn"),
@@ -34,6 +36,9 @@ const els = {
   notifyToggle: $("notifyToggle"),
   demoToggle: $("demoToggle"),
   autoToggle: $("autoToggle"),
+  pageButtons: document.querySelectorAll(".tab-btn"),
+  guidePage: $("guidePage"),
+  privacyPage: $("privacyPage"),
 };
 
 const state = {
@@ -74,7 +79,9 @@ function init() {
   registerServiceWorker();
   detectFeedbackSupport();
   bindControls();
+  bindPageTabs();
   setRoi(state.roi);
+  observeResponsiveLayout();
   setStatus("idle");
 }
 
@@ -117,6 +124,52 @@ function toggleSettings() {
   els.settingsBtn.textContent = shouldOpen ? "收合設定" : "功能設定";
 }
 
+function bindPageTabs() {
+  els.pageButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      switchPage(button.dataset.page || "home");
+    });
+  });
+}
+
+function switchPage(page) {
+  const nextPage = page === "guide" || page === "privacy" ? page : "home";
+  els.shell.dataset.page = nextPage;
+  els.pageButtons.forEach((button) => {
+    const isActive = button.dataset.page === nextPage;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-current", isActive ? "page" : "false");
+  });
+
+  els.guidePage.hidden = nextPage !== "guide";
+  els.privacyPage.hidden = nextPage !== "privacy";
+
+  if (nextPage !== "home" && !els.settingsPanel.hidden) {
+    toggleSettings();
+  }
+}
+
+function observeResponsiveLayout() {
+  const update = () => requestAnimationFrame(updateLayoutMetrics);
+  updateLayoutMetrics();
+
+  if ("ResizeObserver" in window && els.controls) {
+    const observer = new ResizeObserver(update);
+    observer.observe(els.controls);
+  }
+
+  window.addEventListener("resize", update);
+  window.visualViewport?.addEventListener("resize", update);
+  window.addEventListener("orientationchange", update);
+}
+
+function updateLayoutMetrics() {
+  if (!els.controls || !els.shell) return;
+
+  const controlsHeight = Math.ceil(els.controls.getBoundingClientRect().height);
+  els.shell.style.setProperty("--controls-height", `${controlsHeight}px`);
+}
+
 async function toggleDetection() {
   if (state.running) {
     stopDetection();
@@ -124,6 +177,7 @@ async function toggleDetection() {
   }
 
   state.running = true;
+  switchPage("home");
   resetMotionState();
   state.lastAlertAt = 0;
   els.startBtn.textContent = "停止偵測";

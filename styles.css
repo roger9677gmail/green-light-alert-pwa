@@ -11,8 +11,8 @@
   --amber: #f8bd43;
   --blue: #5ab8ff;
   --shadow: rgba(0, 0, 0, 0.36);
-  --action-rail-height: 66px;
-  --readout-offset: calc(var(--action-rail-height) + env(safe-area-inset-bottom));
+  --controls-height: 170px;
+  --readout-offset: var(--controls-height);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
@@ -370,6 +370,70 @@ button:active {
   padding: 9px 14px 8px;
 }
 
+.page-tabs {
+  position: absolute;
+  top: calc(54px + env(safe-area-inset-top));
+  left: 14px;
+  right: 14px;
+  z-index: 8;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.tab-btn {
+  min-height: 34px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(31, 35, 40, 0.76);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  backdrop-filter: blur(12px);
+}
+
+.tab-btn.active {
+  border-color: rgba(53, 224, 115, 0.66);
+  background: rgba(53, 224, 115, 0.92);
+  color: #07180e;
+}
+
+.info-panel {
+  position: absolute;
+  top: calc(100px + env(safe-area-inset-top));
+  left: 14px;
+  right: 14px;
+  bottom: calc(var(--controls-height) + 10px);
+  z-index: 8;
+  display: block;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(18, 21, 25, 0.9);
+  padding: 16px;
+  box-shadow: 0 18px 56px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(18px);
+  -webkit-overflow-scrolling: touch;
+}
+
+.info-panel[hidden] {
+  display: none;
+}
+
+.info-panel h1 {
+  margin: 0 0 12px;
+  color: var(--text);
+  font-size: 1.12rem;
+  letter-spacing: 0;
+}
+
+.info-panel p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
 .meter-row {
   display: grid;
   grid-template-columns: 28px 1fr 48px;
@@ -390,7 +454,8 @@ meter {
   right: 0;
   bottom: 0;
   z-index: 9;
-  display: block;
+  display: grid;
+  gap: 8px;
   border-top: 0;
   background: linear-gradient(180deg, transparent, rgba(16, 17, 19, 0.86) 30%, rgba(16, 17, 19, 0.96));
   padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
@@ -412,6 +477,21 @@ meter {
   color: #07180e;
 }
 
+.ad-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 72px;
+  height: clamp(64px, 11dvh, 96px);
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(244, 241, 234, 0.64);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-align: center;
+}
+
 .control-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -422,7 +502,7 @@ meter {
   position: fixed;
   left: 14px;
   right: 14px;
-  bottom: calc(var(--readout-offset) + 118px);
+  bottom: calc(var(--controls-height) + 112px);
   z-index: 12;
   width: min(calc(100vw - 28px), 402px);
   max-height: min(44dvh, 360px);
@@ -549,7 +629,7 @@ input[type="range"] {
 
 @media (max-height: 720px) {
   :root {
-    --action-rail-height: 62px;
+    --controls-height: 124px;
   }
 
   .control-grid label {
@@ -558,9 +638,30 @@ input[type="range"] {
   }
 
   .settings-panel {
-    bottom: calc(var(--readout-offset) + 100px);
+    bottom: calc(var(--controls-height) + 88px);
     max-height: min(42dvh, 250px);
     padding: 10px;
+  }
+
+  .page-tabs {
+    top: calc(48px + env(safe-area-inset-top));
+  }
+
+  .tab-btn {
+    min-height: 30px;
+    padding: 5px 6px;
+    font-size: 0.72rem;
+  }
+
+  .info-panel {
+    top: calc(86px + env(safe-area-inset-top));
+    bottom: calc(var(--controls-height) + 8px);
+    padding: 14px;
+  }
+
+  .ad-slot {
+    min-height: 48px;
+    height: 54px;
   }
 
   .switch {
