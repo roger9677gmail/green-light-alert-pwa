@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.6.1";
+const APP_VERSION = "2.6.2";
 
 const els = {
   video: $("camera"),
@@ -74,7 +74,7 @@ function init() {
   registerServiceWorker();
   detectFeedbackSupport();
   bindControls();
-  updateRoiFromControls();
+  setRoi(state.roi);
   setStatus("idle");
 }
 
@@ -97,7 +97,7 @@ function bindControls() {
     setMessage(els.autoToggle.checked ? "自動模式會在停止超過設定秒數後進入待提醒。" : "自動已關閉，會直接監看前車移動。");
   });
 
-  [els.roiX, els.roiY, els.roiW, els.roiH].forEach((input) => {
+  [els.roiX, els.roiY, els.roiW, els.roiH].filter(Boolean).forEach((input) => {
     input.addEventListener("input", updateRoiFromControls);
   });
 
@@ -846,7 +846,7 @@ function setRoi(roi, updateControls = false) {
   els.roiBox.style.width = `${state.roi.w * 100}%`;
   els.roiBox.style.height = `${state.roi.h * 100}%`;
 
-  if (updateControls) {
+  if (updateControls && els.roiX && els.roiY && els.roiW && els.roiH) {
     els.roiX.value = Math.round(state.roi.x * 100);
     els.roiY.value = Math.round(state.roi.y * 100);
     els.roiW.value = Math.round(state.roi.w * 100);
@@ -859,6 +859,11 @@ function clamp(value, min, max) {
 }
 
 function updateRoiFromControls() {
+  if (!els.roiX || !els.roiY || !els.roiW || !els.roiH) {
+    setRoi(state.roi);
+    return;
+  }
+
   const x = Number(els.roiX.value) / 100;
   const y = Number(els.roiY.value) / 100;
   const w = Number(els.roiW.value) / 100;

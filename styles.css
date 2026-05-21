@@ -414,8 +414,8 @@ meter {
 
 .control-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
 }
 
 .settings-panel {
@@ -448,11 +448,12 @@ meter {
 
 .control-grid label {
   display: grid;
-  gap: 5px;
+  gap: 7px;
   color: var(--muted);
   font-size: 0.82rem;
   font-weight: 800;
   min-width: 0;
+  width: 100%;
 }
 
 input[type="range"] {
@@ -462,8 +463,8 @@ input[type="range"] {
 
 .toggles {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 7px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
 }
 
 .switch {
@@ -490,11 +491,11 @@ input[type="range"] {
 
 @media (max-width: 380px) {
   .control-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .toggles {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
