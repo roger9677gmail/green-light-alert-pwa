@@ -634,3 +634,73 @@ input[type="range"] {
     font-size: 0.76rem;
   }
 }
+
+@media (orientation: landscape) and (max-height: 540px) and (max-width: 960px) {
+  :root {
+    --controls-height: 116px;
+  }
+
+  html,
+  body {
+    width: 100dvw;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  body {
+    display: grid;
+    place-items: center;
+    padding: 0;
+    background: #050608;
+  }
+
+  .app-shell {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    width: 100dvh;
+    height: 100dvw;
+    max-width: none;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    transform: translate(-50%, -50%) rotate(90deg);
+    transform-origin: center;
+  }
+
+  .settings-panel,
+  .about-panel {
+    bottom: calc(var(--controls-height) + 10px);
+    max-height: min(56dvh, 460px);
+    padding: 12px;
+  }
+
+  .ad-slot {
+    min-height: calc(46px + env(safe-area-inset-bottom));
+    height: calc(clamp(46px, 7dvh, 64px) + env(safe-area-inset-bottom));
+  }
+
+  button {
+    min-height: 44px;
+  }
+
+  .primary-actions button {
+    font-size: 0.86rem;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 540px) and (max-width: 960px) {
+  @supports not (width: 100dvh) {
+    html,
+    body {
+      width: 100vw;
+      height: 100vh;
+    }
+
+    .app-shell {
+      width: 100vh;
+      height: 100vw;
+    }
+  }
+}
