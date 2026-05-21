@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.8.1";
+const APP_VERSION = "2.8.2";
 
 const els = {
   video: $("camera"),
@@ -167,7 +167,7 @@ function observeResponsiveLayout() {
 function updateLayoutMetrics() {
   if (!els.controls || !els.shell) return;
 
-  const controlsHeight = Math.ceil(els.controls.getBoundingClientRect().height);
+  const controlsHeight = Math.ceil(els.controls.offsetHeight);
   els.shell.style.setProperty("--controls-height", `${controlsHeight}px`);
 }
 
