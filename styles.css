@@ -11,8 +11,7 @@
   --amber: #f8bd43;
   --blue: #5ab8ff;
   --shadow: rgba(0, 0, 0, 0.36);
-  --controls-height: 220px;
-  --readout-offset: var(--controls-height);
+  --controls-height: 176px;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
@@ -41,7 +40,7 @@ input {
 }
 
 button {
-  min-height: 46px;
+  min-height: 44px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #252a30;
@@ -359,7 +358,7 @@ button:active {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: var(--readout-offset);
+  bottom: var(--controls-height);
   z-index: 7;
   display: grid;
   gap: 7px;
@@ -367,14 +366,14 @@ button:active {
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(17, 19, 22, 0.84);
   backdrop-filter: blur(14px);
-  padding: 9px 14px 8px;
+  padding: 8px 14px 7px;
 }
 
 .page-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
-  min-height: 50px;
+  min-height: 42px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
   background: rgba(250, 250, 250, 0.94);
@@ -386,19 +385,19 @@ button:active {
   display: grid;
   place-items: center;
   gap: 2px;
-  min-height: 50px;
+  min-height: 42px;
   border: 0;
   border-radius: 0;
   background: transparent;
   color: #8b94a3;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 900;
   line-height: 1.12;
 }
 
 .tab-icon {
   display: block;
-  font-size: 1.08rem;
+  font-size: 0.98rem;
   line-height: 1;
 }
 
@@ -464,10 +463,10 @@ meter {
   bottom: 0;
   z-index: 9;
   display: grid;
-  gap: 8px;
+  gap: 6px;
   border-top: 0;
   background: linear-gradient(180deg, transparent, rgba(16, 17, 19, 0.86) 30%, rgba(16, 17, 19, 0.96));
-  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+  padding: 8px 14px calc(8px + env(safe-area-inset-bottom));
   min-height: 0;
   overflow: visible;
 }
@@ -490,8 +489,8 @@ meter {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 72px;
-  height: clamp(64px, 11dvh, 96px);
+  min-height: 44px;
+  height: clamp(44px, 7dvh, 64px);
   border: 1px dashed rgba(255, 255, 255, 0.2);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.07);
@@ -499,6 +498,15 @@ meter {
   font-size: 0.78rem;
   font-weight: 800;
   text-align: center;
+}
+
+.app-shell.running .page-tabs,
+.app-shell.running .ad-slot {
+  display: none;
+}
+
+.app-shell.running .controls {
+  gap: 0;
 }
 
 .control-grid {
@@ -638,7 +646,7 @@ input[type="range"] {
 
 @media (max-height: 720px) {
   :root {
-    --controls-height: 176px;
+    --controls-height: 108px;
   }
 
   .control-grid label {
@@ -653,12 +661,12 @@ input[type="range"] {
   }
 
   .tab-btn {
-    min-height: 42px;
-    font-size: 0.66rem;
+    min-height: 38px;
+    font-size: 0.64rem;
   }
 
   .page-tabs {
-    min-height: 42px;
+    min-height: 38px;
   }
 
   .tab-icon {
@@ -672,8 +680,8 @@ input[type="range"] {
   }
 
   .ad-slot {
-    min-height: 48px;
-    height: 54px;
+    min-height: 36px;
+    height: 40px;
   }
 
   .switch {
@@ -682,6 +690,6 @@ input[type="range"] {
   }
 
   button {
-    min-height: 42px;
+    min-height: 40px;
   }
 }
