@@ -1,6 +1,16 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.8.8";
+const APP_VERSION = "2.9.0";
+
+const YOLO_CONFIG = {
+  inputSize: 640,
+  intervalMs: 520,
+  minConfidence: 0.28,
+  minRoiOverlap: 0.08,
+  modelUrl: "https://huggingface.co/webml/yolov8n/resolve/main/onnx/yolov8n.onnx",
+  runtimePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/",
+  vehicleClassIds: new Set([1, 2, 3, 5, 7]),
+};
 
 const els = {
   video: $("camera"),
@@ -60,6 +70,19 @@ const state = {
   smoothed: { motion: 0, global: 0 },
   baseline: { motion: 0, global: 0, samples: 0 },
   stoppedSeconds: 0,
+  yolo: {
+    session: null,
+    loading: false,
+    ready: false,
+    failed: false,
+    inFlight: false,
+    lastRunAt: 0,
+    latest: null,
+    previousTarget: null,
+    missingFrames: 0,
+    inputCanvas: null,
+    smoothMotion: 0,
+  },
 };
 
 const statusText = {
@@ -245,6 +268,9 @@ async function toggleDetection() {
 
   await requestWakeLock();
   setStatus(els.demoToggle.checked ? "demo" : "watching");
+  if (!els.demoToggle.checked) {
+    void prepareYolo();
+  }
   if (els.soundToggle.checked && !audioReady) {
     setMessage("音效無法啟用。請確認 iPhone 音量、靜音鍵，或再按一次「測試提醒」。");
   }
@@ -294,7 +320,7 @@ function stopCameraStream() {
 function analyzeFrame(now = performance.now()) {
   if (!state.running) return;
 
-  const metrics = els.demoToggle.checked ? analyzeDemo(now) : analyzeCamera();
+  const metrics = els.demoToggle.checked ? analyzeDemo(now) : analyzeCamera(now);
 
   if (now < state.alertHoldUntil) {
     setStatus("moving");
@@ -347,7 +373,7 @@ function analyzeFrame(now = performance.now()) {
   state.rafId = requestAnimationFrame(analyzeFrame);
 }
 
-function analyzeCamera() {
+function analyzeCamera(now = performance.now()) {
   const videoWidth = els.video.videoWidth;
   const videoHeight = els.video.videoHeight;
 
@@ -375,7 +401,11 @@ function analyzeCamera() {
   const metrics = scoreMotion(gray, state.previousGray, sampleWidth, sampleHeight, roi);
   state.previousGray = gray;
 
-  return smoothMotionMetrics(metrics);
+  if (state.yolo.ready) {
+    scheduleYoloFrame(now);
+  }
+
+  return mergeYoloMetrics(smoothMotionMetrics(metrics));
 }
 
 function analyzeDemo(now) {
@@ -467,6 +497,276 @@ function smoothMotionMetrics(metrics) {
   };
 }
 
+async function prepareYolo() {
+  if (state.yolo.ready || state.yolo.loading || state.yolo.failed || els.demoToggle.checked) return;
+
+  state.yolo.loading = true;
+  setMessage("正在載入 YOLO 車輛辨識。第一次啟動需要多等一下。");
+
+  try {
+    const ortRuntime = await waitForOrtRuntime();
+    ortRuntime.env.wasm.wasmPaths = YOLO_CONFIG.runtimePath;
+    ortRuntime.env.wasm.numThreads = 1;
+
+    state.yolo.session = await ortRuntime.InferenceSession.create(YOLO_CONFIG.modelUrl, {
+      executionProviders: ["wasm"],
+      graphOptimizationLevel: "all",
+    });
+    state.yolo.ready = true;
+    state.yolo.failed = false;
+    setMessage("YOLO 車輛辨識已啟用。框線對準前車或機車，停穩後會自動待提醒。");
+  } catch {
+    state.yolo.failed = true;
+    setMessage("YOLO 模型載入失敗，先改用基本移動偵測。請確認網路後重新載入。");
+  } finally {
+    state.yolo.loading = false;
+  }
+}
+
+function waitForOrtRuntime() {
+  if (window.ort) return Promise.resolve(window.ort);
+
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      if (window.ort) {
+        window.clearInterval(timer);
+        resolve(window.ort);
+        return;
+      }
+
+      if (Date.now() - startedAt > 9000) {
+        window.clearInterval(timer);
+        reject(new Error("ONNX Runtime did not load"));
+      }
+    }, 120);
+  });
+}
+
+function scheduleYoloFrame(now) {
+  if (!state.yolo.session || state.yolo.inFlight) return;
+  if (now - state.yolo.lastRunAt < YOLO_CONFIG.intervalMs) return;
+  if (!els.video.videoWidth || !els.video.videoHeight) return;
+
+  state.yolo.lastRunAt = now;
+  state.yolo.inFlight = true;
+  runYoloFrame()
+    .catch(() => {
+      state.yolo.latest = null;
+    })
+    .finally(() => {
+      state.yolo.inFlight = false;
+    });
+}
+
+async function runYoloFrame() {
+  const frame = createYoloInput();
+  if (!frame) return;
+
+  const inputName = state.yolo.session.inputNames[0];
+  const output = await state.yolo.session.run({ [inputName]: frame.tensor });
+  const outputName = state.yolo.session.outputNames[0];
+  const detections = parseYoloOutput(output[outputName], frame.meta);
+  const target = selectBestVehicle(detections, state.roi);
+  updateYoloMotion(target, detections.length);
+}
+
+function createYoloInput() {
+  const videoWidth = els.video.videoWidth;
+  const videoHeight = els.video.videoHeight;
+  if (!videoWidth || !videoHeight || !window.ort) return null;
+
+  const size = YOLO_CONFIG.inputSize;
+  const canvas = state.yolo.inputCanvas || document.createElement("canvas");
+  state.yolo.inputCanvas = canvas;
+  canvas.width = size;
+  canvas.height = size;
+
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const scale = Math.min(size / videoWidth, size / videoHeight);
+  const drawWidth = Math.round(videoWidth * scale);
+  const drawHeight = Math.round(videoHeight * scale);
+  const padX = Math.floor((size - drawWidth) / 2);
+  const padY = Math.floor((size - drawHeight) / 2);
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, size, size);
+  ctx.drawImage(els.video, 0, 0, videoWidth, videoHeight, padX, padY, drawWidth, drawHeight);
+
+  const pixels = ctx.getImageData(0, 0, size, size).data;
+  const input = new Float32Array(3 * size * size);
+  const plane = size * size;
+
+  for (let i = 0, p = 0; i < pixels.length; i += 4, p += 1) {
+    input[p] = pixels[i] / 255;
+    input[plane + p] = pixels[i + 1] / 255;
+    input[plane * 2 + p] = pixels[i + 2] / 255;
+  }
+
+  return {
+    tensor: new window.ort.Tensor("float32", input, [1, 3, size, size]),
+    meta: { scale, padX, padY, videoWidth, videoHeight },
+  };
+}
+
+function parseYoloOutput(output, meta) {
+  if (!output || !output.data || output.dims.length < 3) return [];
+
+  const [, dimA, dimB] = output.dims;
+  const attributes = dimA < dimB ? dimA : dimB;
+  const anchors = dimA < dimB ? dimB : dimA;
+  const channelsFirst = dimA < dimB;
+  const hasObjectness = attributes === 85;
+  const classOffset = hasObjectness ? 5 : 4;
+  const detections = [];
+
+  const read = (anchor, attr) =>
+    channelsFirst ? output.data[attr * anchors + anchor] : output.data[anchor * attributes + attr];
+
+  for (let anchor = 0; anchor < anchors; anchor += 1) {
+    let bestClassId = -1;
+    let bestClassScore = 0;
+    const objectness = hasObjectness ? read(anchor, 4) : 1;
+
+    for (let attr = classOffset; attr < attributes; attr += 1) {
+      const classId = attr - classOffset;
+      if (!YOLO_CONFIG.vehicleClassIds.has(classId)) continue;
+      const score = read(anchor, attr);
+      if (score > bestClassScore) {
+        bestClassScore = score;
+        bestClassId = classId;
+      }
+    }
+
+    const confidence = bestClassScore * objectness;
+    if (confidence < YOLO_CONFIG.minConfidence || bestClassId < 0) continue;
+
+    const cx = read(anchor, 0);
+    const cy = read(anchor, 1);
+    const width = read(anchor, 2);
+    const height = read(anchor, 3);
+    const box = yoloBoxToVideoBox(cx, cy, width, height, meta);
+    if (!box) continue;
+
+    detections.push({ ...box, confidence, classId: bestClassId });
+  }
+
+  return detections;
+}
+
+function yoloBoxToVideoBox(cx, cy, width, height, meta) {
+  const x1 = (cx - width / 2 - meta.padX) / meta.scale;
+  const y1 = (cy - height / 2 - meta.padY) / meta.scale;
+  const x2 = (cx + width / 2 - meta.padX) / meta.scale;
+  const y2 = (cy + height / 2 - meta.padY) / meta.scale;
+  const left = clamp(x1 / meta.videoWidth, 0, 1);
+  const top = clamp(y1 / meta.videoHeight, 0, 1);
+  const right = clamp(x2 / meta.videoWidth, 0, 1);
+  const bottom = clamp(y2 / meta.videoHeight, 0, 1);
+  const boxWidth = right - left;
+  const boxHeight = bottom - top;
+
+  if (boxWidth <= 0.01 || boxHeight <= 0.01) return null;
+
+  return {
+    x: left,
+    y: top,
+    w: boxWidth,
+    h: boxHeight,
+    cx: left + boxWidth / 2,
+    cy: top + boxHeight / 2,
+    area: boxWidth * boxHeight,
+  };
+}
+
+function selectBestVehicle(detections, roi) {
+  let best = null;
+  let bestScore = 0;
+  const roiArea = roi.w * roi.h;
+
+  detections.forEach((detection) => {
+    const overlap = roiOverlap(detection, roi);
+    const centerInRoi =
+      detection.cx >= roi.x - 0.04 &&
+      detection.cx <= roi.x + roi.w + 0.04 &&
+      detection.cy >= roi.y - 0.04 &&
+      detection.cy <= roi.y + roi.h + 0.04;
+
+    if (overlap < YOLO_CONFIG.minRoiOverlap && !centerInRoi) return;
+
+    const areaScore = Math.min(32, (detection.area / Math.max(roiArea, 0.01)) * 48);
+    const score = detection.confidence * 70 + overlap * 90 + areaScore;
+    if (score > bestScore) {
+      bestScore = score;
+      best = { ...detection, roiOverlap: overlap };
+    }
+  });
+
+  return best;
+}
+
+function updateYoloMotion(target, detectionCount) {
+  const previous = state.yolo.previousTarget;
+
+  if (!target) {
+    if (previous) {
+      state.yolo.missingFrames += 1;
+    }
+
+    const moved = Boolean(previous && state.yolo.missingFrames >= 2);
+    const rawMotion = moved ? Math.min(96, 56 + state.yolo.missingFrames * 14) : 0;
+    state.yolo.smoothMotion = state.yolo.smoothMotion * 0.55 + rawMotion * 0.45;
+    state.yolo.latest = {
+      hasTarget: false,
+      moved,
+      motion: Math.round(state.yolo.smoothMotion),
+      confidence: 0,
+      detectionCount,
+      updatedAt: performance.now(),
+    };
+    return;
+  }
+
+  state.yolo.missingFrames = 0;
+  let rawMotion = 0;
+  let moved = false;
+
+  if (previous) {
+    const dx = target.cx - previous.cx;
+    const dy = target.cy - previous.cy;
+    const centerShift = Math.sqrt(dx * dx + dy * dy);
+    const roiDiagonal = Math.sqrt(state.roi.w * state.roi.w + state.roi.h * state.roi.h);
+    const normalizedShift = centerShift / Math.max(roiDiagonal, 0.1);
+    const areaChange = Math.abs(target.area - previous.area) / Math.max(previous.area, 0.01);
+    const overlapChange = 1 - boxIou(target, previous);
+    const roiExitBoost = previous.roiOverlap > 0.2 && target.roiOverlap < 0.08 ? 24 : 0;
+
+    rawMotion = Math.min(
+      100,
+      Math.round(normalizedShift * 360 + areaChange * 72 + overlapChange * 28 + roiExitBoost),
+    );
+    moved = rawMotion >= 30 || normalizedShift >= 0.08 || areaChange >= 0.22;
+  }
+
+  state.yolo.smoothMotion = state.yolo.smoothMotion * 0.45 + rawMotion * 0.55;
+  state.yolo.latest = {
+    hasTarget: true,
+    moved,
+    motion: Math.round(state.yolo.smoothMotion),
+    confidence: Math.round(target.confidence * 100),
+    classId: target.classId,
+    detectionCount,
+    updatedAt: performance.now(),
+  };
+  state.yolo.previousTarget = target;
+}
+
+function mergeYoloMetrics(metrics) {
+  const latest = state.yolo.latest;
+  if (!latest || performance.now() - latest.updatedAt > YOLO_CONFIG.intervalMs * 4) return metrics;
+  return { ...metrics, yolo: latest };
+}
+
 function deriveMotionState(metrics, sensitivity, tolerance) {
   const baselineMotion = state.baseline.samples ? state.baseline.motion : metrics.globalMotion;
   const baselineGlobal = state.baseline.samples ? state.baseline.global : metrics.globalMotion;
@@ -479,12 +779,15 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
     metrics.motion <= baselineMotion + tolerance * 1.2;
   const stoppedBySharedShake = mismatch <= tolerance * 1.15 && metrics.globalMotion <= tolerance + 34;
   const isStopped = stoppedByBaseline || stoppedBySharedShake;
-  const frontMotion = Math.min(100, Math.round(relativeMotion * 1.45));
+  const pixelFrontMotion = Math.min(100, Math.round(relativeMotion * 1.45));
+  const yoloMotion = metrics.yolo ? metrics.yolo.motion : 0;
+  const frontMotion = Math.max(pixelFrontMotion, yoloMotion);
+  const yoloMoved = Boolean(metrics.yolo?.moved && yoloMotion >= Math.max(22, moveThreshold * 0.55));
 
   return {
     stability: isStopped ? Math.max(0, 100 - Math.round(Math.max(mismatch, relativeMotion))) : metrics.stability,
     frontMotion,
-    frontCarMoved: frontMotion > moveThreshold && relativeMotion > tolerance * 0.7,
+    frontCarMoved: yoloMoved || (pixelFrontMotion > moveThreshold && relativeMotion > tolerance * 0.7),
     isStopped,
   };
 }
@@ -516,7 +819,33 @@ function resetMotionState() {
   state.baseline.motion = 0;
   state.baseline.global = 0;
   state.baseline.samples = 0;
+  resetYoloTracking();
   updateStopSeconds(0);
+}
+
+function resetYoloTracking() {
+  state.yolo.latest = null;
+  state.yolo.previousTarget = null;
+  state.yolo.missingFrames = 0;
+  state.yolo.smoothMotion = 0;
+}
+
+function roiOverlap(box, roi) {
+  return intersectArea(box, roi) / Math.max(box.w * box.h, 0.001);
+}
+
+function boxIou(a, b) {
+  const intersection = intersectArea(a, b);
+  const union = a.w * a.h + b.w * b.h - intersection;
+  return union > 0 ? intersection / union : 0;
+}
+
+function intersectArea(a, b) {
+  const left = Math.max(a.x, b.x);
+  const top = Math.max(a.y, b.y);
+  const right = Math.min(a.x + a.w, b.x + b.w);
+  const bottom = Math.min(a.y + a.h, b.y + b.h);
+  return Math.max(0, right - left) * Math.max(0, bottom - top);
 }
 
 function scoreAveragePixels(pixels) {
