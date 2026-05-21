@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.8.5";
+const APP_VERSION = "2.8.6";
 
 const els = {
   video: $("camera"),
