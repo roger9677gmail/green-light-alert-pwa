@@ -11,6 +11,8 @@
   --amber: #f8bd43;
   --blue: #5ab8ff;
   --shadow: rgba(0, 0, 0, 0.36);
+  --action-rail-height: 66px;
+  --readout-offset: calc(var(--action-rail-height) + env(safe-area-inset-bottom));
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
@@ -53,16 +55,16 @@ button:active {
 }
 
 .app-shell {
-  display: grid;
-  grid-template-rows: 50dvh auto minmax(0, 1fr);
+  position: relative;
+  display: block;
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
-  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .stage {
-  position: relative;
+  position: absolute;
+  inset: 0;
   min-height: 0;
   overflow: hidden;
   background:
@@ -354,10 +356,17 @@ button:active {
 }
 
 .readout-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--readout-offset);
+  z-index: 7;
   display: grid;
   gap: 7px;
-  border-top: 1px solid var(--line);
-  background: rgba(17, 19, 22, 0.96);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(17, 19, 22, 0.84);
+  backdrop-filter: blur(14px);
   padding: 9px 14px 8px;
 }
 
@@ -376,14 +385,17 @@ meter {
 }
 
 .controls {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 10px;
-  border-top: 1px solid var(--line);
-  background: var(--panel-solid);
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9;
+  display: block;
+  border-top: 0;
+  background: linear-gradient(180deg, transparent, rgba(16, 17, 19, 0.86) 30%, rgba(16, 17, 19, 0.96));
   padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .primary-actions {
@@ -407,14 +419,26 @@ meter {
 }
 
 .settings-panel {
-  align-self: stretch;
+  position: fixed;
+  left: 14px;
+  right: 14px;
+  bottom: calc(var(--readout-offset) + 118px);
+  z-index: 12;
+  width: min(calc(100vw - 28px), 402px);
+  max-height: min(44dvh, 360px);
+  margin: 0 auto;
   display: grid;
   gap: 10px;
   min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(24, 27, 31, 0.94);
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.46);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-bottom: 2px;
+  padding: 12px;
+  backdrop-filter: blur(18px);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -511,14 +535,31 @@ input[type="range"] {
   }
 
   .stage {
-    min-height: min(450px, 50dvh);
+    min-height: 0;
+  }
+
+  .settings-panel {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: min(402px, calc(100vw - 48px));
   }
 }
 
 @media (max-height: 720px) {
+  :root {
+    --action-rail-height: 62px;
+  }
+
   .control-grid label {
     gap: 3px;
     font-size: 0.76rem;
+  }
+
+  .settings-panel {
+    bottom: calc(var(--readout-offset) + 100px);
+    max-height: min(42dvh, 250px);
+    padding: 10px;
   }
 
   .switch {
