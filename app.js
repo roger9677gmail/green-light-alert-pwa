@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 
 const els = {
   video: $("camera"),
@@ -19,6 +19,7 @@ const els = {
   message: $("message"),
   sensitivity: $("sensitivity"),
   holdFrames: $("holdFrames"),
+  vibrationTolerance: $("vibrationTolerance"),
   roiX: $("roiX"),
   roiY: $("roiY"),
   roiW: $("roiW"),
@@ -47,6 +48,7 @@ const state = {
   lastAlertAt: 0,
   roi: { x: 0.22, y: 0.16, w: 0.56, h: 0.34 },
   smoothed: { motion: 0, global: 0 },
+  baseline: { motion: 0, global: 0, samples: 0 },
 };
 
 const statusText = {
@@ -173,7 +175,6 @@ function analyzeFrame(now = performance.now()) {
   if (!state.running) return;
 
   const metrics = els.demoToggle.checked ? analyzeDemo(now) : analyzeCamera();
-  updateMeters(metrics.stability, metrics.motion);
 
   if (now < state.alertHoldUntil) {
     setStatus("moving");
@@ -183,17 +184,17 @@ function analyzeFrame(now = performance.now()) {
 
   const sensitivity = Number(els.sensitivity.value);
   const stopSeconds = Number(els.holdFrames.value);
-  const moveThreshold = Math.max(10, 52 - sensitivity * 0.45);
-  const stopThreshold = Math.max(5, 26 - sensitivity * 0.22);
-  const isStopped = metrics.motion < stopThreshold && metrics.globalMotion < stopThreshold;
-  const frontCarMoved = metrics.motion > moveThreshold && metrics.globalMotion < moveThreshold * 0.85;
+  const tolerance = Number(els.vibrationTolerance.value);
+  const derived = deriveMotionState(metrics, sensitivity, tolerance);
+  updateMeters(derived.stability, derived.frontMotion);
 
   if (!els.autoToggle.checked) {
     state.armed = true;
   }
 
   if (!state.armed) {
-    if (isStopped) {
+    learnVibrationBaseline(metrics, tolerance);
+    if (derived.isStopped) {
       if (!state.stoppedSince) state.stoppedSince = now;
       const stoppedMs = now - state.stoppedSince;
       setStatus(stoppedMs >= stopSeconds * 1000 ? "armed" : "stable");
@@ -208,7 +209,7 @@ function analyzeFrame(now = performance.now()) {
       setStatus(els.demoToggle.checked ? "demo" : "watching");
       setMessage("監看中。車身或前車尚未穩定停止。");
     }
-  } else if (frontCarMoved) {
+  } else if (derived.frontCarMoved) {
     setStatus("moving");
     triggerAlert("前車移動了");
     state.alertHoldUntil = now + 3200;
@@ -262,8 +263,8 @@ function analyzeDemo(now) {
 
   updateDemoVisual(moving);
   return moving
-    ? { stability: 38, motion: 72, globalMotion: 8 }
-    : { stability: 96, motion: 3, globalMotion: 2 };
+    ? { stability: 38, motion: 72, globalMotion: 14 }
+    : { stability: 78, motion: 18, globalMotion: 16 };
 }
 
 function updateDemoVisual(moving = false) {
@@ -342,6 +343,42 @@ function smoothMotionMetrics(metrics) {
   };
 }
 
+function deriveMotionState(metrics, sensitivity, tolerance) {
+  const baselineMotion = state.baseline.samples ? state.baseline.motion : metrics.globalMotion;
+  const baselineGlobal = state.baseline.samples ? state.baseline.global : metrics.globalMotion;
+  const engineMotion = Math.max(metrics.globalMotion, baselineGlobal, baselineMotion * 0.85);
+  const relativeMotion = Math.max(0, metrics.motion - engineMotion);
+  const mismatch = Math.abs(metrics.motion - metrics.globalMotion);
+  const moveThreshold = Math.max(12, 58 - sensitivity * 0.46);
+  const stoppedByBaseline = metrics.globalMotion <= baselineGlobal + tolerance && metrics.motion <= baselineMotion + tolerance;
+  const stoppedBySharedShake = mismatch <= tolerance && metrics.globalMotion <= tolerance + 18;
+  const isStopped = stoppedByBaseline || stoppedBySharedShake;
+  const frontMotion = Math.min(100, Math.round(relativeMotion * 1.45));
+
+  return {
+    stability: isStopped ? Math.max(0, 100 - Math.round(Math.max(mismatch, relativeMotion))) : metrics.stability,
+    frontMotion,
+    frontCarMoved: frontMotion > moveThreshold && relativeMotion > tolerance * 0.7,
+    isStopped,
+  };
+}
+
+function learnVibrationBaseline(metrics, tolerance) {
+  const sharedShake = Math.abs(metrics.motion - metrics.globalMotion) <= tolerance + 4;
+  const reasonableShake = metrics.motion <= tolerance + 24 && metrics.globalMotion <= tolerance + 24;
+  if (!sharedShake || !reasonableShake) return;
+
+  const alpha = state.baseline.samples < 8 ? 0.35 : 0.08;
+  if (!state.baseline.samples) {
+    state.baseline.motion = metrics.motion;
+    state.baseline.global = metrics.globalMotion;
+  } else {
+    state.baseline.motion = state.baseline.motion * (1 - alpha) + metrics.motion * alpha;
+    state.baseline.global = state.baseline.global * (1 - alpha) + metrics.globalMotion * alpha;
+  }
+  state.baseline.samples += 1;
+}
+
 function resetMotionState() {
   state.previousGray = null;
   state.stoppedSince = 0;
@@ -350,6 +387,9 @@ function resetMotionState() {
   state.alertHoldUntil = 0;
   state.smoothed.motion = 0;
   state.smoothed.global = 0;
+  state.baseline.motion = 0;
+  state.baseline.global = 0;
+  state.baseline.samples = 0;
 }
 
 function scoreAveragePixels(pixels) {

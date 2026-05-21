@@ -10,7 +10,7 @@
     <title>前車提醒</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="./icon.svg" />
-    <link rel="stylesheet" href="./styles.css?v=2.0.0" />
+    <link rel="stylesheet" href="./styles.css?v=2.1.0" />
   </head>
   <body>
     <main class="app-shell" aria-live="polite">
@@ -71,6 +71,10 @@
             <input id="holdFrames" type="range" min="3" max="10" value="5" />
           </label>
           <label>
+            <span>抖動容忍</span>
+            <input id="vibrationTolerance" type="range" min="4" max="34" value="18" />
+          </label>
+          <label>
             <span>區域 X</span>
             <input id="roiX" type="range" min="0" max="80" value="22" />
           </label>
@@ -117,6 +121,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=2.0.0" type="module"></script>
+    <script src="./app.js?v=2.1.0" type="module"></script>
   </body>
 </html>
