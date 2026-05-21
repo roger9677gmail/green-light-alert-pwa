@@ -10,7 +10,7 @@
     <title>前車提醒</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="./icon.svg" />
-    <link rel="stylesheet" href="./styles.css?v=2.2.0" />
+    <link rel="stylesheet" href="./styles.css?v=2.3.0" />
   </head>
   <body>
     <main class="app-shell" aria-live="polite">
@@ -40,32 +40,30 @@
           </div>
           <span id="stateBadge" class="state-badge idle">待機</span>
         </header>
+      </section>
 
-        <div class="meter-panel">
-          <div class="meter-row">
-            <span>穩</span>
-            <meter id="redMeter" min="0" max="100" value="0"></meter>
-            <strong id="redValue">0</strong>
-          </div>
-          <div class="meter-row">
-            <span>動</span>
-            <meter id="greenMeter" min="0" max="100" value="0"></meter>
-            <strong id="greenValue">0</strong>
-          </div>
-          <div class="meter-row">
-            <span>停</span>
-            <meter id="stopMeter" min="0" max="5" value="0"></meter>
-            <strong id="stopValue">0秒</strong>
-          </div>
+      <section class="readout-panel" aria-label="偵測狀態">
+        <div class="meter-row">
+          <span>穩</span>
+          <meter id="redMeter" min="0" max="100" value="0"></meter>
+          <strong id="redValue">0</strong>
         </div>
+        <div class="meter-row">
+          <span>動</span>
+          <meter id="greenMeter" min="0" max="100" value="0"></meter>
+          <strong id="greenValue">0</strong>
+        </div>
+        <div class="meter-row">
+          <span>停</span>
+          <meter id="stopMeter" min="0" max="5" value="0"></meter>
+          <strong id="stopValue">0秒</strong>
+        </div>
+        <p id="message" class="message">
+          請固定手機，讓框線包住前車。前車移動提示只作輔助，起步前仍需確認路況。
+        </p>
       </section>
 
       <section class="controls" aria-label="控制區">
-        <div class="primary-actions">
-          <button id="startBtn" class="primary" type="button">開始監看</button>
-          <button id="testBtn" type="button">測試提醒</button>
-        </div>
-
         <div class="control-grid">
           <label>
             <span>移動靈敏度</span>
@@ -120,12 +118,13 @@
           </label>
         </div>
 
-        <p id="message" class="message">
-          請固定手機，讓框線包住前車。前車移動提示只作輔助，起步前仍需確認路況。
-        </p>
+        <div class="primary-actions">
+          <button id="startBtn" class="primary" type="button">開始監看</button>
+          <button id="testBtn" type="button">測試提醒</button>
+        </div>
       </section>
     </main>
 
-    <script src="./app.js?v=2.2.0" type="module"></script>
+    <script src="./app.js?v=2.3.0" type="module"></script>
   </body>
 </html>
