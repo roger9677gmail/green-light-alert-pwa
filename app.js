@@ -1,9 +1,10 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.4.0";
+const APP_VERSION = "2.5.0";
 
 const els = {
   video: $("camera"),
+  stage: document.querySelector(".stage"),
   canvas: $("analysisCanvas"),
   roiBox: $("roiBox"),
   flash: $("flash"),
@@ -12,6 +13,8 @@ const els = {
   versionLabel: $("versionLabel"),
   startBtn: $("startBtn"),
   testBtn: $("testBtn"),
+  settingsBtn: $("settingsBtn"),
+  settingsPanel: $("settingsPanel"),
   redMeter: $("redMeter"),
   greenMeter: $("greenMeter"),
   stopMeter: $("stopMeter"),
@@ -81,6 +84,7 @@ function bindControls() {
     await unlockAudio();
     triggerAlert("測試提醒", { userGesture: true });
   });
+  els.settingsBtn.addEventListener("click", toggleSettings);
   els.notifyToggle.addEventListener("change", requestNotificationPermission);
   els.demoToggle.addEventListener("change", () => {
     stopCameraStream();
@@ -97,11 +101,20 @@ function bindControls() {
     input.addEventListener("input", updateRoiFromControls);
   });
 
+  bindRoiGestures();
+
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && state.running) {
       requestWakeLock();
     }
   });
+}
+
+function toggleSettings() {
+  const shouldOpen = els.settingsPanel.hidden;
+  els.settingsPanel.hidden = !shouldOpen;
+  els.settingsBtn.setAttribute("aria-expanded", String(shouldOpen));
+  els.settingsBtn.textContent = shouldOpen ? "收合設定" : "功能設定";
 }
 
 async function toggleDetection() {
@@ -738,23 +751,120 @@ async function requestNotificationPermission() {
   }
 }
 
+function bindRoiGestures() {
+  let gesture = null;
+
+  els.roiBox.addEventListener("pointerdown", (event) => {
+    if (!els.stage) return;
+    event.preventDefault();
+
+    const handle = event.target.dataset.handle || getRoiHandleFromPoint(event.clientX, event.clientY);
+    gesture = {
+      handle,
+      startX: event.clientX,
+      startY: event.clientY,
+      roi: { ...state.roi },
+    };
+    els.roiBox.setPointerCapture(event.pointerId);
+  });
+
+  els.roiBox.addEventListener("pointermove", (event) => {
+    if (!gesture || !els.stage) return;
+    event.preventDefault();
+
+    const rect = els.stage.getBoundingClientRect();
+    const dx = (event.clientX - gesture.startX) / rect.width;
+    const dy = (event.clientY - gesture.startY) / rect.height;
+    setRoi(resizeRoi(gesture.roi, gesture.handle, dx, dy), true);
+  });
+
+  els.roiBox.addEventListener("pointerup", (event) => {
+    gesture = null;
+    els.roiBox.releasePointerCapture(event.pointerId);
+  });
+
+  els.roiBox.addEventListener("pointercancel", () => {
+    gesture = null;
+  });
+}
+
+function getRoiHandleFromPoint(clientX, clientY) {
+  const rect = els.roiBox.getBoundingClientRect();
+  const pad = 42;
+  const nearLeft = clientX - rect.left <= pad;
+  const nearRight = rect.right - clientX <= pad;
+  const nearTop = clientY - rect.top <= pad;
+  const nearBottom = rect.bottom - clientY <= pad;
+
+  if (nearLeft && nearTop) return "tl";
+  if (nearRight && nearTop) return "tr";
+  if (nearLeft && nearBottom) return "bl";
+  if (nearRight && nearBottom) return "br";
+  return "move";
+}
+
+function resizeRoi(start, handle, dx, dy) {
+  const minW = 0.12;
+  const minH = 0.1;
+  let { x, y, w, h } = start;
+
+  if (handle === "move") {
+    x += dx;
+    y += dy;
+  } else {
+    if (handle.includes("l")) {
+      x += dx;
+      w -= dx;
+    }
+    if (handle.includes("r")) w += dx;
+    if (handle.includes("t")) {
+      y += dy;
+      h -= dy;
+    }
+    if (handle.includes("b")) h += dy;
+  }
+
+  w = clamp(w, minW, 0.9);
+  h = clamp(h, minH, 0.85);
+  x = clamp(x, 0, 1 - w);
+  y = clamp(y, 0, 1 - h);
+  return { x, y, w, h };
+}
+
+function setRoi(roi, updateControls = false) {
+  state.roi = {
+    w: clamp(roi.w, 0.12, 0.9),
+    h: clamp(roi.h, 0.1, 0.85),
+    x: 0,
+    y: 0,
+  };
+  state.roi.x = clamp(roi.x, 0, 1 - state.roi.w);
+  state.roi.y = clamp(roi.y, 0, 1 - state.roi.h);
+
+  els.roiBox.style.left = `${state.roi.x * 100}%`;
+  els.roiBox.style.top = `${state.roi.y * 100}%`;
+  els.roiBox.style.width = `${state.roi.w * 100}%`;
+  els.roiBox.style.height = `${state.roi.h * 100}%`;
+
+  if (updateControls) {
+    els.roiX.value = Math.round(state.roi.x * 100);
+    els.roiY.value = Math.round(state.roi.y * 100);
+    els.roiW.value = Math.round(state.roi.w * 100);
+    els.roiH.value = Math.round(state.roi.h * 100);
+  }
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function updateRoiFromControls() {
   const x = Number(els.roiX.value) / 100;
   const y = Number(els.roiY.value) / 100;
   const w = Number(els.roiW.value) / 100;
   const h = Number(els.roiH.value) / 100;
 
-  state.roi = {
-    x: Math.min(x, 1 - w),
-    y: Math.min(y, 1 - h),
-    w,
-    h,
-  };
-
-  els.roiBox.style.left = `${state.roi.x * 100}%`;
-  els.roiBox.style.top = `${state.roi.y * 100}%`;
-  els.roiBox.style.width = `${state.roi.w * 100}%`;
-  els.roiBox.style.height = `${state.roi.h * 100}%`;
+  setRoi({ x, y, w, h });
 }
 
 function updateMeters(red, green) {

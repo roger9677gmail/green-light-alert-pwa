@@ -10,7 +10,7 @@
     <title>前車提醒</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="./icon.svg" />
-    <link rel="stylesheet" href="./styles.css?v=2.4.0" />
+    <link rel="stylesheet" href="./styles.css?v=2.5.0" />
   </head>
   <body>
     <main class="app-shell" aria-live="polite">
@@ -25,11 +25,11 @@
             <span class="tail right"></span>
           </span>
         </div>
-        <div id="roiBox" class="roi-box" aria-hidden="true">
-          <span class="corner tl"></span>
-          <span class="corner tr"></span>
-          <span class="corner bl"></span>
-          <span class="corner br"></span>
+        <div id="roiBox" class="roi-box" aria-label="偵測區域">
+          <span class="corner tl" data-handle="tl"></span>
+          <span class="corner tr" data-handle="tr"></span>
+          <span class="corner bl" data-handle="bl"></span>
+          <span class="corner br" data-handle="br"></span>
         </div>
         <div id="flash" class="flash" aria-hidden="true"></div>
 
@@ -63,67 +63,70 @@
       </section>
 
       <section class="controls" aria-label="控制區">
-        <div class="control-grid">
-          <label>
-            <span>移動靈敏度</span>
-            <input id="sensitivity" type="range" min="20" max="80" value="44" />
-          </label>
-          <label>
-            <span>停止秒數</span>
-            <input id="holdFrames" type="range" min="3" max="10" value="5" />
-          </label>
-          <label>
-            <span>抖動容忍</span>
-            <input id="vibrationTolerance" type="range" min="8" max="70" value="32" />
-          </label>
-          <label>
-            <span>區域 X</span>
-            <input id="roiX" type="range" min="0" max="80" value="22" />
-          </label>
-          <label>
-            <span>區域 Y</span>
-            <input id="roiY" type="range" min="0" max="60" value="16" />
-          </label>
-          <label>
-            <span>區域寬</span>
-            <input id="roiW" type="range" min="12" max="70" value="56" />
-          </label>
-          <label>
-            <span>區域高</span>
-            <input id="roiH" type="range" min="10" max="75" value="34" />
-          </label>
-        </div>
+        <div id="settingsPanel" class="settings-panel" hidden>
+          <div class="control-grid">
+            <label>
+              <span>移動靈敏度</span>
+              <input id="sensitivity" type="range" min="20" max="80" value="44" />
+            </label>
+            <label>
+              <span>停止秒數</span>
+              <input id="holdFrames" type="range" min="3" max="10" value="5" />
+            </label>
+            <label>
+              <span>抖動容忍</span>
+              <input id="vibrationTolerance" type="range" min="8" max="70" value="32" />
+            </label>
+            <label>
+              <span>區域 X</span>
+              <input id="roiX" type="range" min="0" max="80" value="22" />
+            </label>
+            <label>
+              <span>區域 Y</span>
+              <input id="roiY" type="range" min="0" max="60" value="16" />
+            </label>
+            <label>
+              <span>區域寬</span>
+              <input id="roiW" type="range" min="12" max="70" value="56" />
+            </label>
+            <label>
+              <span>區域高</span>
+              <input id="roiH" type="range" min="10" max="75" value="34" />
+            </label>
+          </div>
 
-        <div class="toggles">
-          <label class="switch">
-            <input id="soundToggle" type="checkbox" checked />
-            <span>聲音</span>
-          </label>
-          <label class="switch">
-            <input id="vibrateToggle" type="checkbox" checked />
-            <span>震動</span>
-          </label>
-          <label class="switch">
-            <input id="notifyToggle" type="checkbox" />
-            <span>通知</span>
-          </label>
-          <label class="switch">
-            <input id="demoToggle" type="checkbox" />
-            <span>模擬</span>
-          </label>
-          <label class="switch">
-            <input id="autoToggle" type="checkbox" checked />
-            <span>自動</span>
-          </label>
+          <div class="toggles">
+            <label class="switch">
+              <input id="soundToggle" type="checkbox" checked />
+              <span>聲音</span>
+            </label>
+            <label class="switch">
+              <input id="vibrateToggle" type="checkbox" checked />
+              <span>震動</span>
+            </label>
+            <label class="switch">
+              <input id="notifyToggle" type="checkbox" />
+              <span>通知</span>
+            </label>
+            <label class="switch">
+              <input id="demoToggle" type="checkbox" />
+              <span>模擬</span>
+            </label>
+            <label class="switch">
+              <input id="autoToggle" type="checkbox" checked />
+              <span>自動</span>
+            </label>
+          </div>
         </div>
 
         <div class="primary-actions">
           <button id="startBtn" class="primary" type="button">前車提醒偵測</button>
           <button id="testBtn" type="button">測試提醒</button>
+          <button id="settingsBtn" type="button" aria-expanded="false" aria-controls="settingsPanel">功能設定</button>
         </div>
       </section>
     </main>
 
-    <script src="./app.js?v=2.4.0" type="module"></script>
+    <script src="./app.js?v=2.5.0" type="module"></script>
   </body>
 </html>

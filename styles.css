@@ -278,15 +278,19 @@ button:active {
   box-shadow:
     0 0 0 999px rgba(0, 0, 0, 0.12),
     0 0 24px rgba(53, 224, 115, 0.3);
-  pointer-events: none;
+  cursor: move;
+  pointer-events: auto;
+  touch-action: none;
 }
 
 .corner {
   position: absolute;
-  width: 18px;
-  height: 18px;
+  width: 26px;
+  height: 26px;
   border-color: #fff;
   border-style: solid;
+  pointer-events: auto;
+  touch-action: none;
 }
 
 .corner.tl {
@@ -311,6 +315,16 @@ button:active {
   right: -2px;
   bottom: -2px;
   border-width: 0 3px 3px 0;
+}
+
+.corner.tl,
+.corner.br {
+  cursor: nwse-resize;
+}
+
+.corner.tr,
+.corner.bl {
+  cursor: nesw-resize;
 }
 
 .flash {
@@ -360,16 +374,19 @@ meter {
 
 .controls {
   display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 10px;
   border-top: 1px solid var(--line);
   background: var(--panel-solid);
   padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+  min-height: 0;
 }
 
 .primary-actions {
   display: grid;
-  grid-template-columns: 1.35fr 1fr;
-  gap: 10px;
+  grid-template-columns: 1.28fr 0.92fr 0.92fr;
+  gap: 8px;
+  align-self: end;
 }
 
 .primary {
@@ -384,12 +401,28 @@ meter {
   gap: 8px 12px;
 }
 
+.settings-panel {
+  align-self: end;
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+  max-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: 2px;
+}
+
+.settings-panel[hidden] {
+  display: none;
+}
+
 .control-grid label {
   display: grid;
   gap: 5px;
   color: var(--muted);
   font-size: 0.82rem;
   font-weight: 800;
+  min-width: 0;
 }
 
 input[type="range"] {
@@ -408,6 +441,7 @@ input[type="range"] {
   align-items: center;
   justify-content: center;
   gap: 6px;
+  min-width: 0;
   min-height: 40px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -415,6 +449,13 @@ input[type="range"] {
   color: var(--muted);
   font-size: 0.83rem;
   font-weight: 800;
+}
+
+.switch span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
 @media (max-width: 380px) {
