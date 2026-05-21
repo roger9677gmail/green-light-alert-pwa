@@ -10,7 +10,7 @@
     <title>前車提醒</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="./icon.svg" />
-    <link rel="stylesheet" href="./styles.css?v=2.7.0" />
+    <link rel="stylesheet" href="./styles.css?v=2.7.1" />
   </head>
   <body>
     <main class="app-shell" aria-live="polite">
@@ -40,12 +40,6 @@
           <span id="stateBadge" class="state-badge idle">待機</span>
         </header>
       </section>
-
-      <nav class="page-tabs" aria-label="頁面切換">
-        <button class="tab-btn active" type="button" data-page="home">首頁</button>
-        <button class="tab-btn" type="button" data-page="guide">使用教學</button>
-        <button class="tab-btn" type="button" data-page="privacy">隱私權政策</button>
-      </nav>
 
       <section id="guidePage" class="info-panel app-page" aria-label="使用教學" hidden>
         <h1>使用教學</h1>
@@ -129,12 +123,27 @@
           <button id="settingsBtn" type="button" aria-expanded="false" aria-controls="settingsPanel">功能設定</button>
         </div>
 
+        <nav class="page-tabs" aria-label="頁面切換">
+          <button class="tab-btn active" type="button" data-page="home" aria-current="page">
+            <span class="tab-icon" aria-hidden="true">⌂</span>
+            <span>首頁</span>
+          </button>
+          <button class="tab-btn" type="button" data-page="guide">
+            <span class="tab-icon" aria-hidden="true">?</span>
+            <span>使用教學</span>
+          </button>
+          <button class="tab-btn" type="button" data-page="privacy">
+            <span class="tab-icon" aria-hidden="true">□</span>
+            <span>隱私權政策</span>
+          </button>
+        </nav>
+
         <div id="adSlot" class="ad-slot" aria-label="廣告">
           <span>Google AdSense 廣告容器</span>
         </div>
       </section>
     </main>
 
-    <script src="./app.js?v=2.7.0" type="module"></script>
+    <script src="./app.js?v=2.7.1" type="module"></script>
   </body>
 </html>

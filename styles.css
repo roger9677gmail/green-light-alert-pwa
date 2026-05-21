@@ -11,7 +11,7 @@
   --amber: #f8bd43;
   --blue: #5ab8ff;
   --shadow: rgba(0, 0, 0, 0.36);
-  --controls-height: 170px;
+  --controls-height: 220px;
   --readout-offset: var(--controls-height);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -371,36 +371,45 @@ button:active {
 }
 
 .page-tabs {
-  position: absolute;
-  top: calc(54px + env(safe-area-inset-top));
-  left: 14px;
-  right: 14px;
-  z-index: 8;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  gap: 0;
+  min-height: 50px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(250, 250, 250, 0.94);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
+  overflow: hidden;
 }
 
 .tab-btn {
-  min-height: 34px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: rgba(31, 35, 40, 0.76);
-  color: var(--muted);
-  font-size: 0.78rem;
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  min-height: 50px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #8b94a3;
+  font-size: 0.72rem;
   font-weight: 900;
-  backdrop-filter: blur(12px);
+  line-height: 1.12;
+}
+
+.tab-icon {
+  display: block;
+  font-size: 1.08rem;
+  line-height: 1;
 }
 
 .tab-btn.active {
-  border-color: rgba(53, 224, 115, 0.66);
-  background: rgba(53, 224, 115, 0.92);
-  color: #07180e;
+  background: rgba(157, 24, 27, 0.08);
+  color: #9d181b;
 }
 
 .info-panel {
   position: absolute;
-  top: calc(100px + env(safe-area-inset-top));
+  top: calc(62px + env(safe-area-inset-top));
   left: 14px;
   right: 14px;
   bottom: calc(var(--controls-height) + 10px);
@@ -629,7 +638,7 @@ input[type="range"] {
 
 @media (max-height: 720px) {
   :root {
-    --controls-height: 124px;
+    --controls-height: 176px;
   }
 
   .control-grid label {
@@ -643,18 +652,21 @@ input[type="range"] {
     padding: 10px;
   }
 
-  .page-tabs {
-    top: calc(48px + env(safe-area-inset-top));
+  .tab-btn {
+    min-height: 42px;
+    font-size: 0.66rem;
   }
 
-  .tab-btn {
-    min-height: 30px;
-    padding: 5px 6px;
-    font-size: 0.72rem;
+  .page-tabs {
+    min-height: 42px;
+  }
+
+  .tab-icon {
+    font-size: 0.96rem;
   }
 
   .info-panel {
-    top: calc(86px + env(safe-area-inset-top));
+    top: calc(56px + env(safe-area-inset-top));
     bottom: calc(var(--controls-height) + 8px);
     padding: 14px;
   }
