@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.3.0";
+const APP_VERSION = "2.4.0";
 
 const els = {
   video: $("camera"),
@@ -113,7 +113,7 @@ async function toggleDetection() {
   state.running = true;
   resetMotionState();
   state.lastAlertAt = 0;
-  els.startBtn.textContent = "停止監看";
+  els.startBtn.textContent = "停止偵測";
   const audioReady = await unlockAudio();
 
   if (!els.demoToggle.checked) {
@@ -121,7 +121,7 @@ async function toggleDetection() {
       await startCamera();
     } catch (error) {
       state.running = false;
-      els.startBtn.textContent = "開始監看";
+      els.startBtn.textContent = "前車提醒偵測";
       setStatus("idle");
       setMessage(`相機無法啟動：${error.message || "請確認權限與 HTTPS"}`);
       return;
@@ -159,7 +159,7 @@ function stopDetection() {
   cancelAnimationFrame(state.rafId);
   stopCameraStream();
   releaseWakeLock();
-  els.startBtn.textContent = "開始監看";
+  els.startBtn.textContent = "前車提醒偵測";
   resetMotionState();
   updateMeters(0, 0);
   setStatus("idle");
