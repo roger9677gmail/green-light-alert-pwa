@@ -1,8 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <rect width="512" height="512" rx="96" fill="#101113"/>
-  <rect x="166" y="56" width="180" height="400" rx="56" fill="#1b1f23" stroke="#f4f1ea" stroke-opacity=".18" stroke-width="10"/>
-  <circle cx="256" cy="152" r="54" fill="#ff5a4f"/>
-  <circle cx="256" cy="256" r="54" fill="#2f363d"/>
-  <circle cx="256" cy="360" r="54" fill="#35e073"/>
-  <circle cx="256" cy="360" r="78" fill="none" stroke="#35e073" stroke-opacity=".38" stroke-width="18"/>
+  <path d="M108 350h296" stroke="#35e073" stroke-width="22" stroke-linecap="round" opacity=".9"/>
+  <path d="M142 285l28-82c10-28 32-43 64-43h44c32 0 54 15 64 43l28 82v74c0 17-13 30-30 30h-17c-17 0-30-13-30-30h-74c0 17-13 30-30 30h-17c-17 0-30-13-30-30v-74z" fill="#252b32" stroke="#f4f1ea" stroke-opacity=".22" stroke-width="10"/>
+  <path d="M194 217h124l22 64H172l22-64z" fill="#5ab8ff" opacity=".42"/>
+  <circle cx="191" cy="326" r="24" fill="#ff5a4f"/>
+  <circle cx="321" cy="326" r="24" fill="#ff5a4f"/>
+  <path d="M256 90v44m-76-16l28 34m124-34l-28 34" stroke="#35e073" stroke-width="18" stroke-linecap="round"/>
 </svg>

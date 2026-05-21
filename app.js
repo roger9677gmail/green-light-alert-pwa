@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "2.0.0";
 
 const els = {
   video: $("camera"),
@@ -27,7 +27,7 @@ const els = {
   vibrateToggle: $("vibrateToggle"),
   notifyToggle: $("notifyToggle"),
   demoToggle: $("demoToggle"),
-  farToggle: $("farToggle"),
+  autoToggle: $("autoToggle"),
 };
 
 const state = {
@@ -39,20 +39,23 @@ const state = {
   wakeLock: null,
   audioUnlocked: false,
   reloadingForUpdate: false,
-  greenStreak: 0,
-  redStreak: 0,
+  previousGray: null,
+  stoppedSince: 0,
+  armed: false,
+  demoStart: 0,
+  alertHoldUntil: 0,
   lastAlertAt: 0,
-  demoPhase: "red",
-  demoLastFlip: 0,
-  roi: { x: 0.35, y: 0.05, w: 0.3, h: 0.58 },
+  roi: { x: 0.22, y: 0.16, w: 0.56, h: 0.34 },
+  smoothed: { motion: 0, global: 0 },
 };
 
 const statusText = {
   idle: "待機",
   camera: "相機",
-  red: "紅燈",
-  green: "綠燈",
-  watching: "偵測",
+  stable: "停止",
+  armed: "待動",
+  moving: "移動",
+  watching: "監看",
   demo: "模擬",
 };
 
@@ -76,13 +79,13 @@ function bindControls() {
   els.notifyToggle.addEventListener("change", requestNotificationPermission);
   els.demoToggle.addEventListener("change", () => {
     stopCameraStream();
-    state.greenStreak = 0;
-    setMessage(els.demoToggle.checked ? "模擬模式已開啟，可測試紅燈轉綠燈提醒。" : "請固定手機，讓框線只包住紅綠燈。");
+    resetMotionState();
+    setMessage(els.demoToggle.checked ? "模擬模式已開啟，前車會先停止再移動。" : "請固定手機，讓框線包住前車。");
     updateDemoVisual(performance.now());
   });
-  els.farToggle.addEventListener("change", () => {
-    els.demoLight.classList.toggle("far", els.farToggle.checked);
-    setMessage(els.farToggle.checked ? "遠距模式會尋找框內的小型高亮綠色光點。" : "標準模式會用較大的號誌區域平均判斷。");
+  els.autoToggle.addEventListener("change", () => {
+    resetMotionState();
+    setMessage(els.autoToggle.checked ? "自動模式會在停止超過設定秒數後進入待提醒。" : "自動已關閉，會直接監看前車移動。");
   });
 
   [els.roiX, els.roiY, els.roiW, els.roiH].forEach((input) => {
@@ -103,10 +106,9 @@ async function toggleDetection() {
   }
 
   state.running = true;
-  state.greenStreak = 0;
-  state.redStreak = 0;
+  resetMotionState();
   state.lastAlertAt = 0;
-  els.startBtn.textContent = "停止偵測";
+  els.startBtn.textContent = "停止監看";
   const audioReady = await unlockAudio();
 
   if (!els.demoToggle.checked) {
@@ -114,7 +116,7 @@ async function toggleDetection() {
       await startCamera();
     } catch (error) {
       state.running = false;
-      els.startBtn.textContent = "開始偵測";
+      els.startBtn.textContent = "開始監看";
       setStatus("idle");
       setMessage(`相機無法啟動：${error.message || "請確認權限與 HTTPS"}`);
       return;
@@ -144,7 +146,7 @@ async function startCamera() {
   await els.video.play();
   els.demoLight.classList.remove("active");
   setStatus("camera");
-  setMessage("相機已啟動。框線對準號誌後保持停止等待。");
+  setMessage("相機已啟動。框線對準前車，停穩 5 秒後會自動待提醒。");
 }
 
 function stopDetection() {
@@ -152,12 +154,11 @@ function stopDetection() {
   cancelAnimationFrame(state.rafId);
   stopCameraStream();
   releaseWakeLock();
-  els.startBtn.textContent = "開始偵測";
-  state.greenStreak = 0;
-  state.redStreak = 0;
+  els.startBtn.textContent = "開始監看";
+  resetMotionState();
   updateMeters(0, 0);
   setStatus("idle");
-  setMessage("偵測已停止。");
+  setMessage("監看已停止。");
 }
 
 function stopCameraStream() {
@@ -171,27 +172,51 @@ function stopCameraStream() {
 function analyzeFrame(now = performance.now()) {
   if (!state.running) return;
 
-  const scores = els.demoToggle.checked ? analyzeDemo(now) : analyzeCamera();
-  updateMeters(scores.red, scores.green);
+  const metrics = els.demoToggle.checked ? analyzeDemo(now) : analyzeCamera();
+  updateMeters(metrics.stability, metrics.motion);
+
+  if (now < state.alertHoldUntil) {
+    setStatus("moving");
+    state.rafId = requestAnimationFrame(analyzeFrame);
+    return;
+  }
 
   const sensitivity = Number(els.sensitivity.value);
-  const holdFrames = Number(els.holdFrames.value);
-  const margin = Math.max(8, 80 - sensitivity);
-  const hasGreen = scores.green > sensitivity && scores.green > scores.red + margin;
-  const hasRed = scores.red > sensitivity && scores.red >= scores.green;
+  const stopSeconds = Number(els.holdFrames.value);
+  const moveThreshold = Math.max(10, 52 - sensitivity * 0.45);
+  const stopThreshold = Math.max(5, 26 - sensitivity * 0.22);
+  const isStopped = metrics.motion < stopThreshold && metrics.globalMotion < stopThreshold;
+  const frontCarMoved = metrics.motion > moveThreshold && metrics.globalMotion < moveThreshold * 0.85;
 
-  if (hasGreen) {
-    state.greenStreak += 1;
-    state.redStreak = 0;
-    setStatus("green");
-    if (state.greenStreak >= holdFrames) {
-      triggerAlert("綠燈了");
-      state.greenStreak = Math.ceil(holdFrames / 2);
+  if (!els.autoToggle.checked) {
+    state.armed = true;
+  }
+
+  if (!state.armed) {
+    if (isStopped) {
+      if (!state.stoppedSince) state.stoppedSince = now;
+      const stoppedMs = now - state.stoppedSince;
+      setStatus(stoppedMs >= stopSeconds * 1000 ? "armed" : "stable");
+      setMessage(`停止穩定 ${Math.min(stopSeconds, Math.floor(stoppedMs / 1000))}/${stopSeconds} 秒。`);
+      if (stoppedMs >= stopSeconds * 1000) {
+        state.armed = true;
+        setStatus("armed");
+        setMessage("已待提醒。前車移動時會發出提示。");
+      }
+    } else {
+      state.stoppedSince = 0;
+      setStatus(els.demoToggle.checked ? "demo" : "watching");
+      setMessage("監看中。車身或前車尚未穩定停止。");
     }
+  } else if (frontCarMoved) {
+    setStatus("moving");
+    triggerAlert("前車移動了");
+    state.alertHoldUntil = now + 3200;
+    state.armed = false;
+    state.stoppedSince = 0;
   } else {
-    state.greenStreak = 0;
-    state.redStreak = hasRed ? state.redStreak + 1 : 0;
-    setStatus(state.redStreak > 2 ? "red" : els.demoToggle.checked ? "demo" : "watching");
+    setStatus("armed");
+    setMessage("已待提醒。前車移動時會發出提示。");
   }
 
   state.rafId = requestAnimationFrame(analyzeFrame);
@@ -220,34 +245,111 @@ function analyzeCamera() {
     h: Math.round(state.roi.h * sampleHeight),
   };
 
-  const imageData = ctx.getImageData(roi.x, roi.y, roi.w, roi.h);
-  return els.farToggle.checked
-    ? scoreSmallSignalPixels(imageData.data, roi.w, roi.h)
-    : scoreAveragePixels(imageData.data);
+  const frame = ctx.getImageData(0, 0, sampleWidth, sampleHeight).data;
+  const gray = toGray(frame, sampleWidth, sampleHeight);
+  const metrics = scoreMotion(gray, state.previousGray, sampleWidth, sampleHeight, roi);
+  state.previousGray = gray;
+
+  return smoothMotionMetrics(metrics);
 }
 
 function analyzeDemo(now) {
   els.demoLight.classList.add("active");
 
-  if (!state.demoLastFlip) state.demoLastFlip = now;
-  if (now - state.demoLastFlip > 4200) {
-    state.demoPhase = state.demoPhase === "red" ? "green" : "red";
-    state.demoLastFlip = now;
-  }
+  if (!state.demoStart) state.demoStart = now;
+  const elapsed = now - state.demoStart;
+  const moving = elapsed > Number(els.holdFrames.value) * 1000 + 1200;
 
-  updateDemoVisual(now);
-  return state.demoPhase === "green" ? { red: 4, green: 78 } : { red: 76, green: 5 };
+  updateDemoVisual(moving);
+  return moving
+    ? { stability: 38, motion: 72, globalMotion: 8 }
+    : { stability: 96, motion: 3, globalMotion: 2 };
 }
 
-function updateDemoVisual(now) {
+function updateDemoVisual(moving = false) {
   els.demoLight.classList.toggle("active", els.demoToggle.checked);
-  els.demoLight.classList.toggle("far", els.farToggle.checked);
-  els.demoLight.classList.toggle("red-on", state.demoPhase === "red");
-  els.demoLight.classList.toggle("green-on", state.demoPhase === "green");
+  els.demoLight.classList.toggle("moving", moving);
+}
 
-  if (els.demoToggle.checked && !state.running) {
-    state.demoPhase = now % 6000 > 3000 ? "green" : "red";
+function toGray(pixels, width, height) {
+  const gray = new Uint8Array(width * height);
+  for (let i = 0, p = 0; i < pixels.length; i += 4, p += 1) {
+    gray[p] = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114;
   }
+  return gray;
+}
+
+function scoreMotion(gray, previousGray, width, height, roi) {
+  if (!previousGray || previousGray.length !== gray.length) {
+    return { stability: 0, motion: 0, globalMotion: 0 };
+  }
+
+  let globalDiff = 0;
+  const total = gray.length;
+  for (let i = 0; i < total; i += 1) {
+    globalDiff += Math.abs(gray[i] - previousGray[i]);
+  }
+
+  const globalMotion = Math.min(100, Math.round((globalDiff / total) * 2.4));
+  const roiMotion = scoreRoiMotion(gray, previousGray, width, roi);
+  return {
+    stability: Math.max(0, Math.round(100 - Math.max(globalMotion, roiMotion))),
+    motion: roiMotion,
+    globalMotion,
+  };
+}
+
+function scoreRoiMotion(gray, previousGray, frameWidth, roi) {
+  const cellsX = 8;
+  const cellsY = 6;
+  const sums = new Float32Array(cellsX * cellsY);
+  const counts = new Uint16Array(cellsX * cellsY);
+
+  for (let y = roi.y; y < roi.y + roi.h; y += 1) {
+    for (let x = roi.x; x < roi.x + roi.w; x += 1) {
+      const frameIndex = y * frameWidth + x;
+      const diff = Math.abs(gray[frameIndex] - previousGray[frameIndex]);
+      const cx = Math.min(cellsX - 1, Math.floor(((x - roi.x) / roi.w) * cellsX));
+      const cy = Math.min(cellsY - 1, Math.floor(((y - roi.y) / roi.h) * cellsY));
+      const cell = cy * cellsX + cx;
+      sums[cell] += diff;
+      counts[cell] += 1;
+    }
+  }
+
+  const cellScores = [];
+  for (let i = 0; i < sums.length; i += 1) {
+    if (!counts[i]) continue;
+    cellScores.push((sums[i] / counts[i]) * 3.2);
+  }
+
+  cellScores.sort((a, b) => b - a);
+  const top = cellScores.slice(0, 4);
+  const topAverage = top.reduce((sum, value) => sum + value, 0) / top.length;
+  return Math.min(100, Math.round(topAverage));
+}
+
+function smoothMotionMetrics(metrics) {
+  state.smoothed.motion = state.smoothed.motion * 0.62 + metrics.motion * 0.38;
+  state.smoothed.global = state.smoothed.global * 0.62 + metrics.globalMotion * 0.38;
+  const motion = Math.round(state.smoothed.motion);
+  const globalMotion = Math.round(state.smoothed.global);
+
+  return {
+    stability: Math.max(0, Math.round(100 - Math.max(motion, globalMotion))),
+    motion,
+    globalMotion,
+  };
+}
+
+function resetMotionState() {
+  state.previousGray = null;
+  state.stoppedSince = 0;
+  state.armed = false;
+  state.demoStart = 0;
+  state.alertHoldUntil = 0;
+  state.smoothed.motion = 0;
+  state.smoothed.global = 0;
 }
 
 function scoreAveragePixels(pixels) {

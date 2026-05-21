@@ -89,7 +89,7 @@ button:active {
   display: none;
   place-items: center;
   background:
-    radial-gradient(circle at 50% 18%, rgba(90, 184, 255, 0.28), transparent 24%),
+    radial-gradient(circle at 50% 18%, rgba(90, 184, 255, 0.16), transparent 24%),
     linear-gradient(180deg, #171a1e, #07080a 78%);
 }
 
@@ -99,18 +99,72 @@ button:active {
 
 .demo-light::before {
   content: "";
-  width: min(38vw, 154px);
-  height: min(72vw, 292px);
-  border: 2px solid rgba(255, 255, 255, 0.12);
-  border-radius: 20px;
-  background: #111417;
+  width: min(70vw, 280px);
+  height: 100%;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(90deg, #101317, #181d22 48%, #101317);
   box-shadow: 0 24px 70px var(--shadow);
 }
 
-.demo-light.far::before {
-  width: min(22vw, 88px);
-  height: min(42vw, 170px);
-  transform: translateY(-10vh);
+.road-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+}
+
+.road-line.left {
+  left: 34%;
+}
+
+.road-line.right {
+  right: 34%;
+}
+
+.demo-car {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  width: min(30vw, 124px);
+  height: min(19vw, 78px);
+  border-radius: 14px 14px 8px 8px;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, #4c5662, #252b32);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 12px 38px rgba(0, 0, 0, 0.45);
+}
+
+.demo-light.moving .demo-car {
+  animation: car-move 900ms ease-in-out infinite alternate;
+}
+
+.tail {
+  position: absolute;
+  bottom: 10px;
+  width: 18px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--red);
+  box-shadow: 0 0 16px rgba(255, 90, 79, 0.8);
+}
+
+.tail.left {
+  left: 16px;
+}
+
+.tail.right {
+  right: 16px;
+}
+
+@keyframes car-move {
+  from {
+    transform: translate(-50%, 0);
+  }
+  to {
+    transform: translate(-50%, -54px) scale(0.86);
+  }
 }
 
 .lamp {
@@ -209,13 +263,23 @@ h1 {
   background: #8d211d;
 }
 
+.state-badge.armed {
+  color: #102015;
+  background: var(--amber);
+}
+
+.state-badge.moving {
+  color: #07180e;
+  background: var(--green);
+}
+
 .roi-box {
   position: absolute;
   z-index: 3;
-  left: 35%;
-  top: 5%;
-  width: 30%;
-  height: 58%;
+  left: 22%;
+  top: 16%;
+  width: 56%;
+  height: 34%;
   border: 2px solid rgba(53, 224, 115, 0.95);
   box-shadow:
     0 0 0 999px rgba(0, 0, 0, 0.12),
