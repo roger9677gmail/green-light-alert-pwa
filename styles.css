@@ -29,6 +29,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -54,7 +55,9 @@ button:active {
 .app-shell {
   display: grid;
   grid-template-rows: 50dvh auto minmax(0, 1fr);
-  min-height: 100dvh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   padding-bottom: env(safe-area-inset-bottom);
 }
 
@@ -380,6 +383,7 @@ meter {
   background: var(--panel-solid);
   padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
   min-height: 0;
+  overflow: hidden;
 }
 
 .primary-actions {
@@ -387,6 +391,7 @@ meter {
   grid-template-columns: 1.28fr 0.92fr 0.92fr;
   gap: 8px;
   align-self: end;
+  min-height: 0;
 }
 
 .primary {
@@ -402,14 +407,15 @@ meter {
 }
 
 .settings-panel {
-  align-self: end;
+  align-self: stretch;
   display: grid;
   gap: 10px;
   min-height: 0;
-  max-height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .settings-panel[hidden] {
@@ -496,7 +502,8 @@ input[type="range"] {
 
   .app-shell {
     width: min(430px, 100%);
-    min-height: min(900px, 100dvh);
+    height: min(900px, calc(100dvh - 48px));
+    min-height: 0;
     overflow: hidden;
     border: 1px solid var(--line);
     border-radius: 8px;
