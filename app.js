@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.9.2";
+const APP_VERSION = "2.9.3";
 
 const YOLO_CONFIG = {
   inputSize: 640,
@@ -78,6 +78,8 @@ const state = {
     missingFrames: 0,
     inputCanvas: null,
     smoothMotion: 0,
+    stableSince: 0,
+    stillMs: 0,
   },
 };
 
@@ -585,7 +587,7 @@ async function runYoloFrame() {
   const output = await state.yolo.session.run({ [inputName]: frame.tensor });
   const outputName = state.yolo.session.outputNames[0];
   const detections = parseYoloOutput(output[outputName], frame.meta);
-  const target = selectBestVehicle(detections);
+  const target = selectTrackedVehicle(detections);
   renderYoloDetections(detections, target);
   updateYoloMotion(target, detections.length);
 }
@@ -718,6 +720,34 @@ function selectBestVehicle(detections) {
   return best;
 }
 
+function selectTrackedVehicle(detections) {
+  const previous = state.yolo.previousTarget;
+  if (!previous) return selectBestVehicle(detections);
+
+  let bestMatch = null;
+  let bestMatchScore = 0;
+
+  detections.forEach((detection) => {
+    const dx = detection.cx - previous.cx;
+    const dy = detection.cy - previous.cy;
+    const centerDistance = Math.sqrt(dx * dx + dy * dy);
+    const overlap = boxIou(detection, previous);
+    const areaRatio = Math.min(detection.area, previous.area) / Math.max(detection.area, previous.area, 0.001);
+    const matchScore = overlap * 86 + Math.max(0, 1 - centerDistance / 0.18) * 44 + areaRatio * 20;
+
+    if (matchScore > bestMatchScore) {
+      bestMatchScore = matchScore;
+      bestMatch = detection;
+    }
+  });
+
+  if (bestMatch && bestMatchScore >= 46) {
+    return { ...bestMatch, trackedScore: bestMatchScore };
+  }
+
+  return selectBestVehicle(detections);
+}
+
 function renderYoloDetections(detections = [], target = null) {
   state.yolo.detections = detections;
   state.yolo.target = target;
@@ -780,6 +810,7 @@ function vehicleLabel(classId) {
 
 function updateYoloMotion(target, detectionCount) {
   const previous = state.yolo.previousTarget;
+  const now = performance.now();
 
   if (!target) {
     if (previous) {
@@ -789,13 +820,17 @@ function updateYoloMotion(target, detectionCount) {
     const moved = Boolean(previous && state.yolo.missingFrames >= 2);
     const rawMotion = moved ? Math.min(96, 56 + state.yolo.missingFrames * 14) : 0;
     state.yolo.smoothMotion = state.yolo.smoothMotion * 0.55 + rawMotion * 0.45;
+    state.yolo.stableSince = 0;
+    state.yolo.stillMs = 0;
     state.yolo.latest = {
       hasTarget: false,
       moved,
       motion: Math.round(state.yolo.smoothMotion),
+      stable: false,
+      stillMs: 0,
       confidence: 0,
       detectionCount,
-      updatedAt: performance.now(),
+      updatedAt: now,
     };
     return;
   }
@@ -803,15 +838,18 @@ function updateYoloMotion(target, detectionCount) {
   state.yolo.missingFrames = 0;
   let rawMotion = 0;
   let moved = false;
+  let normalizedShift = 0;
+  let areaChange = 0;
+  let overlapChange = 0;
 
   if (previous) {
     const dx = target.cx - previous.cx;
     const dy = target.cy - previous.cy;
     const centerShift = Math.sqrt(dx * dx + dy * dy);
     const roiDiagonal = Math.sqrt(1 + 1);
-    const normalizedShift = centerShift / Math.max(roiDiagonal, 0.1);
-    const areaChange = Math.abs(target.area - previous.area) / Math.max(previous.area, 0.01);
-    const overlapChange = 1 - boxIou(target, previous);
+    normalizedShift = centerShift / Math.max(roiDiagonal, 0.1);
+    areaChange = Math.abs(target.area - previous.area) / Math.max(previous.area, 0.01);
+    overlapChange = 1 - boxIou(target, previous);
 
     rawMotion = Math.min(
       100,
@@ -821,14 +859,31 @@ function updateYoloMotion(target, detectionCount) {
   }
 
   state.yolo.smoothMotion = state.yolo.smoothMotion * 0.45 + rawMotion * 0.55;
+  const stable =
+    !moved &&
+    state.yolo.smoothMotion <= 18 &&
+    normalizedShift <= 0.018 &&
+    areaChange <= 0.08 &&
+    overlapChange <= 0.28;
+
+  if (stable) {
+    if (!state.yolo.stableSince) state.yolo.stableSince = now;
+    state.yolo.stillMs = now - state.yolo.stableSince;
+  } else {
+    state.yolo.stableSince = 0;
+    state.yolo.stillMs = 0;
+  }
+
   state.yolo.latest = {
     hasTarget: true,
     moved,
     motion: Math.round(state.yolo.smoothMotion),
+    stable,
+    stillMs: Math.round(state.yolo.stillMs),
     confidence: Math.round(target.confidence * 100),
     classId: target.classId,
     detectionCount,
-    updatedAt: performance.now(),
+    updatedAt: now,
   };
   state.yolo.previousTarget = target;
 }
@@ -850,14 +905,24 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
     metrics.globalMotion <= baselineGlobal + tolerance * 1.2 &&
     metrics.motion <= baselineMotion + tolerance * 1.2;
   const stoppedBySharedShake = mismatch <= tolerance * 1.15 && metrics.globalMotion <= tolerance + 34;
-  const isStopped = stoppedByBaseline || stoppedBySharedShake;
+  const stoppedByYolo =
+    Boolean(metrics.yolo?.hasTarget) &&
+    Boolean(metrics.yolo?.stable) &&
+    metrics.yolo.stillMs >= 1200 &&
+    metrics.yolo.motion <= Math.max(18, tolerance + 8);
+  const isStopped = stoppedByBaseline || stoppedBySharedShake || stoppedByYolo;
   const pixelFrontMotion = Math.min(100, Math.round(relativeMotion * 1.45));
   const yoloMotion = metrics.yolo ? metrics.yolo.motion : 0;
   const frontMotion = Math.max(pixelFrontMotion, yoloMotion);
   const yoloMoved = Boolean(metrics.yolo?.moved && yoloMotion >= Math.max(22, moveThreshold * 0.55));
+  const stability = stoppedByYolo
+    ? Math.max(72, Math.min(100, 100 - yoloMotion))
+    : isStopped
+      ? Math.max(0, 100 - Math.round(Math.max(mismatch, relativeMotion)))
+      : metrics.stability;
 
   return {
-    stability: isStopped ? Math.max(0, 100 - Math.round(Math.max(mismatch, relativeMotion))) : metrics.stability,
+    stability,
     frontMotion,
     frontCarMoved: yoloMoved || (pixelFrontMotion > moveThreshold && relativeMotion > tolerance * 0.7),
     isStopped,
@@ -902,6 +967,8 @@ function resetYoloTracking() {
   state.yolo.previousTarget = null;
   state.yolo.missingFrames = 0;
   state.yolo.smoothMotion = 0;
+  state.yolo.stableSince = 0;
+  state.yolo.stillMs = 0;
   renderYoloDetections([]);
 }
 
