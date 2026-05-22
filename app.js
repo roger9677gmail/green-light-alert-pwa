@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.9.0";
+const APP_VERSION = "2.9.1";
 
 const YOLO_CONFIG = {
   inputSize: 640,
@@ -177,18 +177,24 @@ function closeAbout() {
 }
 
 async function forceUpdateToLatest() {
+  state.reloadingForUpdate = true;
   setMessage("正在清除快取並檢查最新版。");
   els.updateBtn.disabled = true;
   els.updateBtn.textContent = "更新中";
+  const refreshToken = Date.now().toString();
 
   try {
     if ("serviceWorker" in navigator) {
       const registrations = await navigator.serviceWorker.getRegistrations();
       await Promise.all(
         registrations.map(async (registration) => {
-          await registration.update();
-          if (registration.waiting) {
-            activateUpdatedWorker(registration.waiting);
+          try {
+            await registration.update();
+            [registration.waiting, registration.installing, registration.active].filter(Boolean).forEach((worker) => {
+              activateUpdatedWorker(worker);
+            });
+          } catch {
+            // Keep going; unregistering and cache clearing matter more for a forced refresh.
           }
           return registration.unregister();
         }),
@@ -203,10 +209,17 @@ async function forceUpdateToLatest() {
     setMessage("更新檢查未完全成功，仍會重新載入嘗試取得最新版。");
   }
 
-  const url = new URL(window.location.href);
+  const url = new URL("./index.html", window.location.href);
   url.searchParams.set("v", APP_VERSION);
-  url.searchParams.set("refresh", Date.now().toString());
-  window.location.replace(url.toString());
+  url.searchParams.set("refresh", refreshToken);
+  url.searchParams.set("nocache", refreshToken);
+
+  window.setTimeout(() => {
+    window.location.replace(url.toString());
+  }, 250);
+  window.setTimeout(() => {
+    window.location.assign(url.toString());
+  }, 900);
 }
 
 function observeResponsiveLayout() {
