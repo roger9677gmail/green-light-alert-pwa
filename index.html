@@ -10,7 +10,7 @@
     <title>前車提醒</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="./icon.svg" />
-    <link rel="stylesheet" href="./styles.css?v=2.9.1" />
+    <link rel="stylesheet" href="./styles.css?v=2.9.2" />
     <script
       async
       src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2983536102376833"
@@ -31,12 +31,7 @@
             <span class="tail right"></span>
           </span>
         </div>
-        <div id="roiBox" class="roi-box" aria-label="偵測區域">
-          <span class="corner tl" data-handle="tl"></span>
-          <span class="corner tr" data-handle="tr"></span>
-          <span class="corner bl" data-handle="bl"></span>
-          <span class="corner br" data-handle="br"></span>
-        </div>
+        <div id="yoloOverlay" class="yolo-overlay" aria-label="YOLO 車輛辨識結果"></div>
         <div id="flash" class="flash" aria-hidden="true"></div>
 
         <header class="topbar">
@@ -61,7 +56,7 @@
           <strong id="stopValue">0秒</strong>
         </div>
         <p id="message" class="message">
-          請固定手機，讓框線包住前車。前車移動提示只作輔助，起步前仍需確認路況。
+          請固定手機，讓相機看得到前方車輛。前車移動提示只作輔助，起步前仍需確認路況。
         </p>
       </section>
 
@@ -114,9 +109,9 @@
           </div>
           <button id="updateBtn" class="update-btn" type="button">強制更新至最新版</button>
           <h2>使用教學</h2>
-          <p>把 iPhone 固定在不遮擋視線的位置，讓偵測框包住前車尾部或車身中心。</p>
+          <p>把 iPhone 固定在不遮擋視線的位置，讓相機可以看到前方車輛或機車。</p>
           <p>停等時保持 PWA 在前景，按下「前車偵測」。停穩達設定秒數後，前車移動會發出提示。</p>
-          <p>偵測框可以用手指拖曳，也可以拉角落改變大小。此工具只作輔助提醒，起步前仍需確認號誌、行人與周遭路況。</p>
+          <p>畫面上的 YOLO 框線會顯示目前辨識到的車輛；亮綠色代表正在追蹤的前車。此工具只作輔助提醒，起步前仍需確認號誌、行人與周遭路況。</p>
           <h2>隱私權政策</h2>
           <p>本 PWA 只會在你按下偵測後，於你的裝置上即時分析相機畫面，用來判斷前車是否移動。</p>
           <p>本工具本身不會記錄、儲存或上傳 GPS 位置、相機影像、照片、影片、麥克風聲音、車牌、人臉、行車路線、通知內容或任何可辨識個人的資料。</p>
@@ -139,6 +134,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=2.9.1" type="module"></script>
+    <script src="./app.js?v=2.9.2" type="module"></script>
   </body>
 </html>

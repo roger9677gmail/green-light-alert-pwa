@@ -260,64 +260,45 @@ button:active {
   background: var(--green);
 }
 
-.roi-box {
+.yolo-overlay {
   position: absolute;
   z-index: 3;
-  left: 22%;
-  top: 16%;
-  width: 56%;
-  height: 34%;
-  border: 2px solid rgba(53, 224, 115, 0.95);
-  box-shadow:
-    0 0 0 999px rgba(0, 0, 0, 0.12),
-    0 0 24px rgba(53, 224, 115, 0.3);
-  cursor: move;
-  pointer-events: auto;
-  touch-action: none;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
-.corner {
+.yolo-box {
   position: absolute;
-  width: 26px;
-  height: 26px;
-  border-color: #fff;
-  border-style: solid;
-  pointer-events: auto;
-  touch-action: none;
+  min-width: 18px;
+  min-height: 18px;
+  border: 2px solid rgba(90, 184, 255, 0.92);
+  box-shadow: 0 0 22px rgba(90, 184, 255, 0.28);
 }
 
-.corner.tl {
-  top: -2px;
+.yolo-box.tracked {
+  border-color: rgba(53, 224, 115, 0.98);
+  box-shadow: 0 0 26px rgba(53, 224, 115, 0.38);
+}
+
+.yolo-box span {
+  position: absolute;
   left: -2px;
-  border-width: 3px 0 0 3px;
+  top: -26px;
+  max-width: min(200px, 60vw);
+  padding: 3px 7px;
+  border-radius: 6px 6px 6px 0;
+  background: rgba(5, 6, 8, 0.78);
+  color: #f4f1ea;
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
-.corner.tr {
-  top: -2px;
-  right: -2px;
-  border-width: 3px 3px 0 0;
-}
-
-.corner.bl {
-  bottom: -2px;
-  left: -2px;
-  border-width: 0 0 3px 3px;
-}
-
-.corner.br {
-  right: -2px;
-  bottom: -2px;
-  border-width: 0 3px 3px 0;
-}
-
-.corner.tl,
-.corner.br {
-  cursor: nwse-resize;
-}
-
-.corner.tr,
-.corner.bl {
-  cursor: nesw-resize;
+.yolo-box.tracked span {
+  color: #07180e;
+  background: rgba(53, 224, 115, 0.96);
 }
 
 .flash {

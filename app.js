@@ -1,12 +1,11 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.9.1";
+const APP_VERSION = "2.9.2";
 
 const YOLO_CONFIG = {
   inputSize: 640,
   intervalMs: 520,
   minConfidence: 0.28,
-  minRoiOverlap: 0.08,
   modelUrl: "https://huggingface.co/webml/yolov8n/resolve/main/onnx/yolov8n.onnx",
   runtimePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/",
   vehicleClassIds: new Set([1, 2, 3, 5, 7]),
@@ -16,7 +15,7 @@ const els = {
   video: $("camera"),
   stage: document.querySelector(".stage"),
   canvas: $("analysisCanvas"),
-  roiBox: $("roiBox"),
+  yoloOverlay: $("yoloOverlay"),
   flash: $("flash"),
   demoLight: $("demoLight"),
   shell: document.querySelector(".app-shell"),
@@ -40,10 +39,6 @@ const els = {
   sensitivity: $("sensitivity"),
   holdFrames: $("holdFrames"),
   vibrationTolerance: $("vibrationTolerance"),
-  roiX: $("roiX"),
-  roiY: $("roiY"),
-  roiW: $("roiW"),
-  roiH: $("roiH"),
   soundToggle: $("soundToggle"),
   vibrateToggle: $("vibrateToggle"),
   notifyToggle: $("notifyToggle"),
@@ -66,7 +61,6 @@ const state = {
   demoStart: 0,
   alertHoldUntil: 0,
   lastAlertAt: 0,
-  roi: { x: 0.22, y: 0.16, w: 0.56, h: 0.34 },
   smoothed: { motion: 0, global: 0 },
   baseline: { motion: 0, global: 0, samples: 0 },
   stoppedSeconds: 0,
@@ -78,6 +72,8 @@ const state = {
     inFlight: false,
     lastRunAt: 0,
     latest: null,
+    detections: [],
+    target: null,
     previousTarget: null,
     missingFrames: 0,
     inputCanvas: null,
@@ -102,7 +98,6 @@ function init() {
   registerServiceWorker();
   detectFeedbackSupport();
   bindControls();
-  setRoi(state.roi);
   observeResponsiveLayout();
   setStatus("idle");
   warnIfCameraBlockedByHttp();
@@ -121,7 +116,7 @@ function bindControls() {
   els.demoToggle.addEventListener("change", () => {
     stopCameraStream();
     resetMotionState();
-    setMessage(els.demoToggle.checked ? "模擬模式已開啟，前車會先停止再移動。" : "請固定手機，讓框線包住前車。");
+    setMessage(els.demoToggle.checked ? "模擬模式已開啟，前車會先停止再移動。" : "請固定手機，讓相機看得到前方車輛。");
     updateDemoVisual(performance.now());
   });
   els.autoToggle.addEventListener("change", () => {
@@ -129,11 +124,7 @@ function bindControls() {
     setMessage(els.autoToggle.checked ? "自動模式會在停止超過設定秒數後進入待提醒。" : "自動已關閉，會直接監看前車移動。");
   });
 
-  [els.roiX, els.roiY, els.roiW, els.roiH].filter(Boolean).forEach((input) => {
-    input.addEventListener("input", updateRoiFromControls);
-  });
-
-  bindRoiGestures();
+  bindOutsidePanelClose();
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && state.running) {
@@ -174,6 +165,23 @@ function closeAbout() {
   els.aboutPanel.hidden = true;
   els.aboutBtn.setAttribute("aria-expanded", "false");
   els.aboutBtn.textContent = "關於";
+}
+
+function bindOutsidePanelClose() {
+  document.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (els.settingsPanel.hidden && els.aboutPanel.hidden) return;
+    if (els.settingsPanel.contains(target) || els.aboutPanel.contains(target)) return;
+    if (els.settingsBtn.contains(target) || els.aboutBtn.contains(target)) return;
+    closeSettings();
+    closeAbout();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    closeSettings();
+    closeAbout();
+  });
 }
 
 async function forceUpdateToLatest() {
@@ -241,6 +249,7 @@ function updateLayoutMetrics() {
 
   const controlsHeight = Math.ceil(els.controls.offsetHeight);
   els.shell.style.setProperty("--controls-height", `${controlsHeight}px`);
+  renderYoloDetections(state.yolo.detections, state.yolo.target);
 }
 
 async function toggleDetection() {
@@ -305,7 +314,7 @@ async function startCamera() {
   await els.video.play();
   els.demoLight.classList.remove("active");
   setStatus("camera");
-  setMessage("相機已啟動。框線對準前車，停穩 5 秒後會自動待提醒。");
+  setMessage("相機已啟動。YOLO 會標出前方車輛，停穩 5 秒後自動待提醒。");
 }
 
 function stopDetection() {
@@ -314,6 +323,7 @@ function stopDetection() {
   cancelAnimationFrame(state.rafId);
   stopCameraStream();
   releaseWakeLock();
+  renderYoloDetections([]);
   els.startBtn.textContent = "前車偵測";
   resetMotionState();
   updateMeters(0, 0);
@@ -402,12 +412,7 @@ function analyzeCamera(now = performance.now()) {
   canvas.height = sampleHeight;
   ctx.drawImage(els.video, 0, 0, sampleWidth, sampleHeight);
 
-  const roi = {
-    x: Math.round(state.roi.x * sampleWidth),
-    y: Math.round(state.roi.y * sampleHeight),
-    w: Math.round(state.roi.w * sampleWidth),
-    h: Math.round(state.roi.h * sampleHeight),
-  };
+  const roi = { x: 0, y: 0, w: sampleWidth, h: sampleHeight };
 
   const frame = ctx.getImageData(0, 0, sampleWidth, sampleHeight).data;
   const gray = toGray(frame, sampleWidth, sampleHeight);
@@ -527,7 +532,7 @@ async function prepareYolo() {
     });
     state.yolo.ready = true;
     state.yolo.failed = false;
-    setMessage("YOLO 車輛辨識已啟用。框線對準前車或機車，停穩後會自動待提醒。");
+    setMessage("YOLO 車輛辨識已啟用。畫面會直接標出車輛與機車。");
   } catch {
     state.yolo.failed = true;
     setMessage("YOLO 模型載入失敗，先改用基本移動偵測。請確認網路後重新載入。");
@@ -580,7 +585,8 @@ async function runYoloFrame() {
   const output = await state.yolo.session.run({ [inputName]: frame.tensor });
   const outputName = state.yolo.session.outputNames[0];
   const detections = parseYoloOutput(output[outputName], frame.meta);
-  const target = selectBestVehicle(detections, state.roi);
+  const target = selectBestVehicle(detections);
+  renderYoloDetections(detections, target);
   updateYoloMotion(target, detections.length);
 }
 
@@ -661,7 +667,7 @@ function parseYoloOutput(output, meta) {
     const box = yoloBoxToVideoBox(cx, cy, width, height, meta);
     if (!box) continue;
 
-    detections.push({ ...box, confidence, classId: bestClassId });
+    detections.push({ ...box, confidence, classId: bestClassId, id: detections.length });
   }
 
   return detections;
@@ -692,30 +698,84 @@ function yoloBoxToVideoBox(cx, cy, width, height, meta) {
   };
 }
 
-function selectBestVehicle(detections, roi) {
+function selectBestVehicle(detections) {
   let best = null;
   let bestScore = 0;
-  const roiArea = roi.w * roi.h;
 
   detections.forEach((detection) => {
-    const overlap = roiOverlap(detection, roi);
-    const centerInRoi =
-      detection.cx >= roi.x - 0.04 &&
-      detection.cx <= roi.x + roi.w + 0.04 &&
-      detection.cy >= roi.y - 0.04 &&
-      detection.cy <= roi.y + roi.h + 0.04;
+    if (detection.area < 0.0025) return;
 
-    if (overlap < YOLO_CONFIG.minRoiOverlap && !centerInRoi) return;
-
-    const areaScore = Math.min(32, (detection.area / Math.max(roiArea, 0.01)) * 48);
-    const score = detection.confidence * 70 + overlap * 90 + areaScore;
+    const centerBias = 1 - Math.min(1, Math.abs(detection.cx - 0.5) / 0.5);
+    const lowerBias = clamp((detection.cy - 0.16) / 0.84, 0, 1);
+    const areaScore = Math.min(46, detection.area * 360);
+    const score = detection.confidence * 70 + centerBias * 22 + lowerBias * 30 + areaScore;
     if (score > bestScore) {
       bestScore = score;
-      best = { ...detection, roiOverlap: overlap };
+      best = { ...detection, trackedScore: score };
     }
   });
 
   return best;
+}
+
+function renderYoloDetections(detections = [], target = null) {
+  state.yolo.detections = detections;
+  state.yolo.target = target;
+  if (!els.yoloOverlay) return;
+
+  els.yoloOverlay.replaceChildren();
+  if (!detections.length || !els.video.videoWidth || !els.video.videoHeight) return;
+
+  const videoRect = getRenderedVideoRect();
+  detections
+    .slice()
+    .sort((a, b) => b.area - a.area)
+    .slice(0, 8)
+    .forEach((detection) => {
+      const tracked = target && detection.id === target.id;
+      const box = document.createElement("div");
+      const label = document.createElement("span");
+      const left = videoRect.x + detection.x * videoRect.w;
+      const top = videoRect.y + detection.y * videoRect.h;
+      const width = detection.w * videoRect.w;
+      const height = detection.h * videoRect.h;
+
+      box.className = tracked ? "yolo-box tracked" : "yolo-box";
+      box.style.left = `${left}px`;
+      box.style.top = `${top}px`;
+      box.style.width = `${width}px`;
+      box.style.height = `${height}px`;
+      label.textContent = `${vehicleLabel(detection.classId)} ${Math.round(detection.confidence * 100)}%`;
+      box.appendChild(label);
+      els.yoloOverlay.appendChild(box);
+    });
+}
+
+function getRenderedVideoRect() {
+  const stageRect = els.stage.getBoundingClientRect();
+  const videoWidth = els.video.videoWidth || stageRect.width;
+  const videoHeight = els.video.videoHeight || stageRect.height;
+  const scale = Math.max(stageRect.width / videoWidth, stageRect.height / videoHeight);
+  const width = videoWidth * scale;
+  const height = videoHeight * scale;
+
+  return {
+    x: (stageRect.width - width) / 2,
+    y: (stageRect.height - height) / 2,
+    w: width,
+    h: height,
+  };
+}
+
+function vehicleLabel(classId) {
+  const labels = {
+    1: "自行車",
+    2: "汽車",
+    3: "機車",
+    5: "公車",
+    7: "卡車",
+  };
+  return labels[classId] || "車輛";
 }
 
 function updateYoloMotion(target, detectionCount) {
@@ -748,15 +808,14 @@ function updateYoloMotion(target, detectionCount) {
     const dx = target.cx - previous.cx;
     const dy = target.cy - previous.cy;
     const centerShift = Math.sqrt(dx * dx + dy * dy);
-    const roiDiagonal = Math.sqrt(state.roi.w * state.roi.w + state.roi.h * state.roi.h);
+    const roiDiagonal = Math.sqrt(1 + 1);
     const normalizedShift = centerShift / Math.max(roiDiagonal, 0.1);
     const areaChange = Math.abs(target.area - previous.area) / Math.max(previous.area, 0.01);
     const overlapChange = 1 - boxIou(target, previous);
-    const roiExitBoost = previous.roiOverlap > 0.2 && target.roiOverlap < 0.08 ? 24 : 0;
 
     rawMotion = Math.min(
       100,
-      Math.round(normalizedShift * 360 + areaChange * 72 + overlapChange * 28 + roiExitBoost),
+      Math.round(normalizedShift * 460 + areaChange * 72 + overlapChange * 28),
     );
     moved = rawMotion >= 30 || normalizedShift >= 0.08 || areaChange >= 0.22;
   }
@@ -838,13 +897,12 @@ function resetMotionState() {
 
 function resetYoloTracking() {
   state.yolo.latest = null;
+  state.yolo.detections = [];
+  state.yolo.target = null;
   state.yolo.previousTarget = null;
   state.yolo.missingFrames = 0;
   state.yolo.smoothMotion = 0;
-}
-
-function roiOverlap(box, roi) {
-  return intersectArea(box, roi) / Math.max(box.w * box.h, 0.001);
+  renderYoloDetections([]);
 }
 
 function boxIou(a, b) {
@@ -1197,125 +1255,8 @@ async function requestNotificationPermission() {
   }
 }
 
-function bindRoiGestures() {
-  let gesture = null;
-
-  els.roiBox.addEventListener("pointerdown", (event) => {
-    if (!els.stage) return;
-    event.preventDefault();
-
-    const handle = event.target.dataset.handle || getRoiHandleFromPoint(event.clientX, event.clientY);
-    gesture = {
-      handle,
-      startX: event.clientX,
-      startY: event.clientY,
-      roi: { ...state.roi },
-    };
-    els.roiBox.setPointerCapture(event.pointerId);
-  });
-
-  els.roiBox.addEventListener("pointermove", (event) => {
-    if (!gesture || !els.stage) return;
-    event.preventDefault();
-
-    const rect = els.stage.getBoundingClientRect();
-    const dx = (event.clientX - gesture.startX) / rect.width;
-    const dy = (event.clientY - gesture.startY) / rect.height;
-    setRoi(resizeRoi(gesture.roi, gesture.handle, dx, dy), true);
-  });
-
-  els.roiBox.addEventListener("pointerup", (event) => {
-    gesture = null;
-    els.roiBox.releasePointerCapture(event.pointerId);
-  });
-
-  els.roiBox.addEventListener("pointercancel", () => {
-    gesture = null;
-  });
-}
-
-function getRoiHandleFromPoint(clientX, clientY) {
-  const rect = els.roiBox.getBoundingClientRect();
-  const pad = 42;
-  const nearLeft = clientX - rect.left <= pad;
-  const nearRight = rect.right - clientX <= pad;
-  const nearTop = clientY - rect.top <= pad;
-  const nearBottom = rect.bottom - clientY <= pad;
-
-  if (nearLeft && nearTop) return "tl";
-  if (nearRight && nearTop) return "tr";
-  if (nearLeft && nearBottom) return "bl";
-  if (nearRight && nearBottom) return "br";
-  return "move";
-}
-
-function resizeRoi(start, handle, dx, dy) {
-  const minW = 0.12;
-  const minH = 0.1;
-  let { x, y, w, h } = start;
-
-  if (handle === "move") {
-    x += dx;
-    y += dy;
-  } else {
-    if (handle.includes("l")) {
-      x += dx;
-      w -= dx;
-    }
-    if (handle.includes("r")) w += dx;
-    if (handle.includes("t")) {
-      y += dy;
-      h -= dy;
-    }
-    if (handle.includes("b")) h += dy;
-  }
-
-  w = clamp(w, minW, 0.9);
-  h = clamp(h, minH, 0.85);
-  x = clamp(x, 0, 1 - w);
-  y = clamp(y, 0, 1 - h);
-  return { x, y, w, h };
-}
-
-function setRoi(roi, updateControls = false) {
-  state.roi = {
-    w: clamp(roi.w, 0.12, 0.9),
-    h: clamp(roi.h, 0.1, 0.85),
-    x: 0,
-    y: 0,
-  };
-  state.roi.x = clamp(roi.x, 0, 1 - state.roi.w);
-  state.roi.y = clamp(roi.y, 0, 1 - state.roi.h);
-
-  els.roiBox.style.left = `${state.roi.x * 100}%`;
-  els.roiBox.style.top = `${state.roi.y * 100}%`;
-  els.roiBox.style.width = `${state.roi.w * 100}%`;
-  els.roiBox.style.height = `${state.roi.h * 100}%`;
-
-  if (updateControls && els.roiX && els.roiY && els.roiW && els.roiH) {
-    els.roiX.value = Math.round(state.roi.x * 100);
-    els.roiY.value = Math.round(state.roi.y * 100);
-    els.roiW.value = Math.round(state.roi.w * 100);
-    els.roiH.value = Math.round(state.roi.h * 100);
-  }
-}
-
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
-}
-
-function updateRoiFromControls() {
-  if (!els.roiX || !els.roiY || !els.roiW || !els.roiH) {
-    setRoi(state.roi);
-    return;
-  }
-
-  const x = Number(els.roiX.value) / 100;
-  const y = Number(els.roiY.value) / 100;
-  const w = Number(els.roiW.value) / 100;
-  const h = Number(els.roiH.value) / 100;
-
-  setRoi({ x, y, w, h });
 }
 
 function updateMeters(red, green) {
