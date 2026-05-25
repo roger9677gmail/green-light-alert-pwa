@@ -11,7 +11,7 @@
   --amber: #f8bd43;
   --blue: #5ab8ff;
   --shadow: rgba(0, 0, 0, 0.36);
-  --controls-height: 116px;
+  --controls-height: 176px;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
@@ -567,7 +567,7 @@ meter {
   bottom: 0;
   z-index: 9;
   display: grid;
-  gap: 6px;
+  gap: 8px;
   border-top: 0;
   background: linear-gradient(180deg, transparent, rgba(16, 17, 19, 0.86) 30%, rgba(16, 17, 19, 0.96));
   padding: 8px 14px 0;
@@ -577,15 +577,27 @@ meter {
 
 .primary-actions {
   display: grid;
-  grid-template-columns: 1.15fr 0.85fr 0.9fr 0.62fr 0.58fr;
-  gap: 6px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
   align-self: end;
   min-height: 0;
 }
 
 .primary-actions button {
-  padding-inline: 6px;
-  font-size: 0.86rem;
+  min-height: 50px;
+  padding-inline: 8px;
+  font-size: 0.92rem;
+}
+
+#startBtn,
+#testBtn,
+#settingsBtn {
+  grid-column: span 2;
+}
+
+#aboutBtn,
+#homeBtn {
+  grid-column: span 3;
 }
 
 .primary {
@@ -618,6 +630,11 @@ meter {
   border-color: rgba(20, 25, 30, 0.22);
   background: rgba(255, 255, 255, 0.64);
   color: #626b75;
+}
+
+.detector-ad-slot {
+  min-height: calc(50px + env(safe-area-inset-bottom));
+  height: calc(50px + env(safe-area-inset-bottom));
 }
 
 .control-grid {
@@ -828,7 +845,7 @@ input[type="range"] {
 
 @media (max-height: 720px) {
   :root {
-    --controls-height: 104px;
+    --controls-height: 160px;
   }
 
   .control-grid label {
@@ -849,8 +866,8 @@ input[type="range"] {
   }
 
   .ad-slot {
-    min-height: calc(38px + env(safe-area-inset-bottom));
-    height: calc(40px + env(safe-area-inset-bottom));
+    min-height: calc(42px + env(safe-area-inset-bottom));
+    height: calc(42px + env(safe-area-inset-bottom));
   }
 
   .switch {
@@ -859,17 +876,18 @@ input[type="range"] {
   }
 
   button {
-    min-height: 40px;
+    min-height: 44px;
   }
 
   .primary-actions button {
-    font-size: 0.76rem;
+    min-height: 46px;
+    font-size: 0.82rem;
   }
 }
 
 @media (orientation: landscape) and (max-height: 540px) and (max-width: 960px) {
   :root {
-    --controls-height: 116px;
+    --controls-height: 176px;
   }
 
   html,

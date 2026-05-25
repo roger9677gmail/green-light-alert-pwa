@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.9.5";
+const APP_VERSION = "2.9.6";
 
 const YOLO_CONFIG = {
   inputSize: 640,
@@ -65,8 +65,8 @@ const state = {
   demoStart: 0,
   alertHoldUntil: 0,
   lastAlertAt: 0,
-  smoothed: { motion: 0, global: 0 },
-  baseline: { motion: 0, global: 0, samples: 0 },
+  smoothed: { motion: 0, global: 0, lower: 0 },
+  baseline: { motion: 0, global: 0, lower: 0, samples: 0 },
   stoppedSeconds: 0,
   yolo: {
     session: null,
@@ -469,7 +469,7 @@ function analyzeCamera(now = performance.now()) {
   const videoHeight = els.video.videoHeight;
 
   if (!videoWidth || !videoHeight) {
-    return { stability: 0, motion: 0, globalMotion: 0 };
+    return { stability: 0, motion: 0, globalMotion: 0, lowerMotion: 0 };
   }
 
   const sampleWidth = 240;
@@ -533,10 +533,18 @@ function scoreMotion(gray, previousGray, width, height, roi) {
 
   const globalMotion = Math.min(100, Math.round((globalDiff / total) * 2.4));
   const roiMotion = scoreRoiMotion(gray, previousGray, width, roi);
+  const lowerY = Math.floor(height * 0.58);
+  const lowerMotion = scoreRoiMotion(gray, previousGray, width, {
+    x: 0,
+    y: lowerY,
+    w: width,
+    h: height - lowerY,
+  });
   return {
-    stability: Math.max(0, Math.round(100 - Math.max(globalMotion, roiMotion))),
+    stability: Math.max(0, Math.round(100 - Math.max(globalMotion, roiMotion, lowerMotion * 0.86))),
     motion: roiMotion,
     globalMotion,
+    lowerMotion,
   };
 }
 
@@ -573,13 +581,16 @@ function scoreRoiMotion(gray, previousGray, frameWidth, roi) {
 function smoothMotionMetrics(metrics) {
   state.smoothed.motion = state.smoothed.motion * 0.62 + metrics.motion * 0.38;
   state.smoothed.global = state.smoothed.global * 0.62 + metrics.globalMotion * 0.38;
+  state.smoothed.lower = state.smoothed.lower * 0.62 + (metrics.lowerMotion || 0) * 0.38;
   const motion = Math.round(state.smoothed.motion);
   const globalMotion = Math.round(state.smoothed.global);
+  const lowerMotion = Math.round(state.smoothed.lower);
 
   return {
-    stability: Math.max(0, Math.round(100 - Math.max(motion, globalMotion))),
+    stability: Math.max(0, Math.round(100 - Math.max(motion, globalMotion, lowerMotion * 0.86))),
     motion,
     globalMotion,
+    lowerMotion,
   };
 }
 
@@ -930,7 +941,11 @@ function updateYoloMotion(target, detectionCount) {
       100,
       Math.round(normalizedShift * 460 + areaChange * 72 + overlapChange * 28),
     );
-    moved = rawMotion >= 30 || normalizedShift >= 0.08 || areaChange >= 0.22;
+    const lockedOrArmed = state.yolo.locked || state.armed;
+    const motionThreshold = lockedOrArmed ? 38 : 30;
+    const shiftThreshold = lockedOrArmed ? 0.095 : 0.08;
+    const areaThreshold = lockedOrArmed ? 0.26 : 0.22;
+    moved = rawMotion >= motionThreshold || normalizedShift >= shiftThreshold || areaChange >= areaThreshold;
   }
 
   state.yolo.smoothMotion = state.yolo.smoothMotion * 0.45 + rawMotion * 0.55;
@@ -976,52 +991,75 @@ function mergeYoloMetrics(metrics) {
 }
 
 function deriveMotionState(metrics, sensitivity, tolerance) {
-  const baselineMotion = state.baseline.samples ? state.baseline.motion : metrics.globalMotion;
-  const baselineGlobal = state.baseline.samples ? state.baseline.global : metrics.globalMotion;
+  const hasBaseline = state.baseline.samples >= 4;
+  const baselineMotion = hasBaseline ? state.baseline.motion : 0;
+  const baselineGlobal = hasBaseline ? state.baseline.global : 0;
+  const baselineLower = hasBaseline ? state.baseline.lower : 0;
   const engineMotion = Math.max(metrics.globalMotion, baselineGlobal, baselineMotion * 0.9);
   const relativeMotion = Math.max(0, metrics.motion - engineMotion);
   const mismatch = Math.abs(metrics.motion - metrics.globalMotion);
+  const lowerMotion = metrics.lowerMotion || 0;
   const moveThreshold = Math.max(12, 58 - sensitivity * 0.46);
+  const globalStopLimit = hasBaseline
+    ? Math.min(58, Math.max(28, baselineGlobal + tolerance * 0.75))
+    : Math.min(46, tolerance + 24);
+  const lowerStopLimit = hasBaseline
+    ? Math.min(58, Math.max(28, baselineLower + tolerance * 0.75))
+    : Math.min(46, tolerance + 24);
+  const ownCarLooksStopped =
+    metrics.globalMotion <= globalStopLimit &&
+    lowerMotion <= lowerStopLimit;
   const stoppedByBaseline =
-    metrics.globalMotion <= baselineGlobal + tolerance * 1.2 &&
-    metrics.motion <= baselineMotion + tolerance * 1.2;
-  const stoppedBySharedShake = mismatch <= tolerance * 1.15 && metrics.globalMotion <= tolerance + 34;
+    hasBaseline &&
+    ownCarLooksStopped &&
+    metrics.motion <= baselineMotion + tolerance * 1.05;
+  const stoppedBySharedShake =
+    ownCarLooksStopped &&
+    mismatch <= tolerance * 1.05;
   const stoppedByYolo =
+    ownCarLooksStopped &&
     Boolean(metrics.yolo?.hasTarget) &&
     Boolean(metrics.yolo?.stable) &&
-    metrics.yolo.stillMs >= 1200 &&
+    metrics.yolo.stillMs >= 1500 &&
     metrics.yolo.motion <= Math.max(18, tolerance + 8);
   const isStopped = stoppedByBaseline || stoppedBySharedShake || stoppedByYolo;
   const pixelFrontMotion = Math.min(100, Math.round(relativeMotion * 1.45));
   const yoloMotion = metrics.yolo ? metrics.yolo.motion : 0;
   const frontMotion = Math.max(pixelFrontMotion, yoloMotion);
-  const yoloMoved = Boolean(metrics.yolo?.moved && yoloMotion >= Math.max(22, moveThreshold * 0.55));
+  const hasFreshYolo = Boolean(metrics.yolo && performance.now() - metrics.yolo.updatedAt <= YOLO_CONFIG.intervalMs * 4);
+  const yoloMoved = Boolean(metrics.yolo?.moved && yoloMotion >= Math.max(28, moveThreshold * 0.68));
+  const pixelMoved = pixelFrontMotion > moveThreshold && relativeMotion > tolerance * 0.85;
   const stability = stoppedByYolo
     ? Math.max(72, Math.min(100, 100 - yoloMotion))
     : isStopped
-      ? Math.max(0, 100 - Math.round(Math.max(mismatch, relativeMotion)))
+      ? Math.max(0, 100 - Math.round(Math.max(mismatch, relativeMotion, lowerMotion * 0.45)))
       : metrics.stability;
 
   return {
     stability,
     frontMotion,
-    frontCarMoved: yoloMoved || (pixelFrontMotion > moveThreshold && relativeMotion > tolerance * 0.7),
+    frontCarMoved: hasFreshYolo ? yoloMoved : pixelMoved,
     isStopped,
   };
 }
 
 function learnVibrationBaseline(metrics, tolerance) {
   const sharedShake = Math.abs(metrics.motion - metrics.globalMotion) <= tolerance * 1.15 + 4;
-  const reasonableShake = metrics.motion <= tolerance + 38 && metrics.globalMotion <= tolerance + 38;
+  const reasonableShake =
+    metrics.motion <= tolerance + 34 &&
+    metrics.globalMotion <= tolerance + 34 &&
+    (metrics.lowerMotion || 0) <= tolerance + 34;
   if (!sharedShake || !reasonableShake) return;
 
   const alpha = state.baseline.samples < 8 ? 0.35 : 0.08;
   if (!state.baseline.samples) {
     state.baseline.motion = metrics.motion;
     state.baseline.global = metrics.globalMotion;
+    state.baseline.lower = metrics.lowerMotion || metrics.globalMotion;
   } else {
     state.baseline.motion = state.baseline.motion * (1 - alpha) + metrics.motion * alpha;
     state.baseline.global = state.baseline.global * (1 - alpha) + metrics.globalMotion * alpha;
+    state.baseline.lower = state.baseline.lower * (1 - alpha) + (metrics.lowerMotion || metrics.globalMotion) * alpha;
   }
   state.baseline.samples += 1;
 }
@@ -1034,8 +1072,10 @@ function resetMotionState() {
   state.alertHoldUntil = 0;
   state.smoothed.motion = 0;
   state.smoothed.global = 0;
+  state.smoothed.lower = 0;
   state.baseline.motion = 0;
   state.baseline.global = 0;
+  state.baseline.lower = 0;
   state.baseline.samples = 0;
   resetYoloTracking();
   updateStopSeconds(0);
