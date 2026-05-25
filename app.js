@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.9.4";
+const APP_VERSION = "2.9.5";
 
 const YOLO_CONFIG = {
   inputSize: 640,
@@ -18,14 +18,18 @@ const els = {
   yoloOverlay: $("yoloOverlay"),
   flash: $("flash"),
   demoLight: $("demoLight"),
+  contentShell: $("contentShell"),
   shell: document.querySelector(".app-shell"),
   controls: document.querySelector(".controls"),
   stateBadge: $("stateBadge"),
   versionLabel: $("versionLabel"),
+  homeVersionLabel: $("homeVersionLabel"),
+  launchBtn: $("launchBtn"),
   startBtn: $("startBtn"),
   testBtn: $("testBtn"),
   settingsBtn: $("settingsBtn"),
   aboutBtn: $("aboutBtn"),
+  homeBtn: $("homeBtn"),
   updateBtn: $("updateBtn"),
   settingsPanel: $("settingsPanel"),
   aboutPanel: $("aboutPanel"),
@@ -98,6 +102,7 @@ init();
 
 function init() {
   els.versionLabel.textContent = `v${APP_VERSION}`;
+  els.homeVersionLabel.textContent = `v${APP_VERSION}`;
   registerServiceWorker();
   detectFeedbackSupport();
   bindControls();
@@ -107,6 +112,10 @@ function init() {
 }
 
 function bindControls() {
+  els.launchBtn.addEventListener("click", async () => {
+    showDetector();
+    await toggleDetection();
+  });
   els.startBtn.addEventListener("click", toggleDetection);
   els.testBtn.addEventListener("click", async () => {
     await unlockAudio();
@@ -114,6 +123,7 @@ function bindControls() {
   });
   els.settingsBtn.addEventListener("click", toggleSettings);
   els.aboutBtn.addEventListener("click", toggleAbout);
+  els.homeBtn.addEventListener("click", showHome);
   els.updateBtn.addEventListener("click", forceUpdateToLatest);
   els.notifyToggle.addEventListener("change", requestNotificationPermission);
   els.demoToggle.addEventListener("change", () => {
@@ -134,6 +144,22 @@ function bindControls() {
       requestWakeLock();
     }
   });
+}
+
+function showDetector() {
+  els.shell.hidden = false;
+  document.body.classList.add("detector-active");
+  updateLayoutMetrics();
+}
+
+function showHome() {
+  if (state.running) {
+    stopDetection();
+  }
+  closeSettings();
+  closeAbout();
+  els.shell.hidden = true;
+  document.body.classList.remove("detector-active");
 }
 
 function toggleSettings() {
@@ -256,6 +282,10 @@ function updateLayoutMetrics() {
 }
 
 async function toggleDetection() {
+  if (els.shell.hidden) {
+    showDetector();
+  }
+
   if (!isCameraSecureContext()) {
     setStatus("idle");
     setMessage("相機需要 HTTPS 才能啟動。請使用 https://9677.fun，或等待 GitHub Pages HTTPS 憑證完成。");
