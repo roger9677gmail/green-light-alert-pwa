@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.9.3";
+const APP_VERSION = "2.9.4";
 
 const YOLO_CONFIG = {
   inputSize: 640,
@@ -80,6 +80,7 @@ const state = {
     smoothMotion: 0,
     stableSince: 0,
     stillMs: 0,
+    locked: false,
   },
 };
 
@@ -302,6 +303,23 @@ async function toggleDetection() {
 }
 
 async function startCamera() {
+  const testVideoUrl = new URLSearchParams(window.location.search).get("testVideo");
+  const canUseLocalTestVideo =
+    testVideoUrl && ["localhost", "127.0.0.1"].includes(window.location.hostname);
+
+  if (canUseLocalTestVideo) {
+    els.video.srcObject = null;
+    els.video.src = testVideoUrl;
+    els.video.loop = true;
+    els.video.muted = true;
+    els.video.playsInline = true;
+    await els.video.play();
+    els.demoLight.classList.remove("active");
+    setStatus("camera");
+    setMessage("本機測試影片已啟動。YOLO 會標出前方車輛並判斷停止/移動。");
+    return;
+  }
+
   const constraints = {
     audio: false,
     video: {
@@ -340,6 +358,10 @@ function stopCameraStream() {
   }
   state.stream = null;
   els.video.srcObject = null;
+  if (els.video.src) {
+    els.video.removeAttribute("src");
+    els.video.load();
+  }
 }
 
 function analyzeFrame(now = performance.now()) {
@@ -363,7 +385,21 @@ function analyzeFrame(now = performance.now()) {
     state.armed = true;
   }
 
-  if (!state.armed) {
+  const preArmedYoloMove =
+    !state.armed &&
+    state.stoppedSince &&
+    now - state.stoppedSince >= 1600 &&
+    Boolean(metrics.yolo?.moved) &&
+    derived.frontCarMoved;
+
+  if (preArmedYoloMove) {
+    setStatus("moving");
+    triggerAlert("前車移動了");
+    state.alertHoldUntil = now + 3200;
+    state.armed = false;
+    state.stoppedSince = 0;
+    updateStopSeconds(0);
+  } else if (!state.armed) {
     learnVibrationBaseline(metrics, tolerance);
     if (derived.isStopped) {
       if (!state.stoppedSince) state.stoppedSince = now;
@@ -707,10 +743,14 @@ function selectBestVehicle(detections) {
   detections.forEach((detection) => {
     if (detection.area < 0.0025) return;
 
-    const centerBias = 1 - Math.min(1, Math.abs(detection.cx - 0.5) / 0.5);
+    const sideOffset = Math.abs(detection.cx - 0.5);
+    const centerBias = 1 - Math.min(1, sideOffset / 0.5);
     const lowerBias = clamp((detection.cy - 0.16) / 0.84, 0, 1);
     const areaScore = Math.min(46, detection.area * 360);
-    const score = detection.confidence * 70 + centerBias * 22 + lowerBias * 30 + areaScore;
+    const sidePenalty = sideOffset > 0.38 ? 42 : sideOffset > 0.3 ? 20 : 0;
+    const smallSidePenalty = detection.area < 0.02 && sideOffset > 0.26 ? 18 : 0;
+    const score =
+      detection.confidence * 70 + centerBias * 34 + lowerBias * 30 + areaScore - sidePenalty - smallSidePenalty;
     if (score > bestScore) {
       bestScore = score;
       best = { ...detection, trackedScore: score };
@@ -724,6 +764,7 @@ function selectTrackedVehicle(detections) {
   const previous = state.yolo.previousTarget;
   if (!previous) return selectBestVehicle(detections);
 
+  const locked = state.armed || Boolean(state.stoppedSince) || state.yolo.stillMs >= 900 || state.yolo.locked;
   let bestMatch = null;
   let bestMatchScore = 0;
 
@@ -733,7 +774,7 @@ function selectTrackedVehicle(detections) {
     const centerDistance = Math.sqrt(dx * dx + dy * dy);
     const overlap = boxIou(detection, previous);
     const areaRatio = Math.min(detection.area, previous.area) / Math.max(detection.area, previous.area, 0.001);
-    const matchScore = overlap * 86 + Math.max(0, 1 - centerDistance / 0.18) * 44 + areaRatio * 20;
+    const matchScore = overlap * 92 + Math.max(0, 1 - centerDistance / 0.16) * 48 + areaRatio * 24;
 
     if (matchScore > bestMatchScore) {
       bestMatchScore = matchScore;
@@ -741,8 +782,12 @@ function selectTrackedVehicle(detections) {
     }
   });
 
-  if (bestMatch && bestMatchScore >= 46) {
+  if (bestMatch && bestMatchScore >= (locked ? 34 : 46)) {
     return { ...bestMatch, trackedScore: bestMatchScore };
+  }
+
+  if (locked || state.yolo.missingFrames < 2) {
+    return null;
   }
 
   return selectBestVehicle(detections);
@@ -817,8 +862,8 @@ function updateYoloMotion(target, detectionCount) {
       state.yolo.missingFrames += 1;
     }
 
-    const moved = Boolean(previous && state.yolo.missingFrames >= 2);
-    const rawMotion = moved ? Math.min(96, 56 + state.yolo.missingFrames * 14) : 0;
+    const moved = Boolean(previous && state.yolo.missingFrames >= (state.yolo.locked ? 1 : 2));
+    const rawMotion = moved ? Math.min(98, (state.yolo.locked ? 72 : 56) + state.yolo.missingFrames * 14) : 0;
     state.yolo.smoothMotion = state.yolo.smoothMotion * 0.55 + rawMotion * 0.45;
     state.yolo.stableSince = 0;
     state.yolo.stillMs = 0;
@@ -869,7 +914,13 @@ function updateYoloMotion(target, detectionCount) {
   if (stable) {
     if (!state.yolo.stableSince) state.yolo.stableSince = now;
     state.yolo.stillMs = now - state.yolo.stableSince;
+    if (state.yolo.stillMs >= 900 || state.armed || state.stoppedSince) {
+      state.yolo.locked = true;
+    }
   } else {
+    if (!state.armed && !state.stoppedSince) {
+      state.yolo.locked = false;
+    }
     state.yolo.stableSince = 0;
     state.yolo.stillMs = 0;
   }
@@ -969,6 +1020,7 @@ function resetYoloTracking() {
   state.yolo.smoothMotion = 0;
   state.yolo.stableSince = 0;
   state.yolo.stillMs = 0;
+  state.yolo.locked = false;
   renderYoloDetections([]);
 }
 
