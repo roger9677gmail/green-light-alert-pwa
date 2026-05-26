@@ -1,10 +1,10 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.9.7";
+const APP_VERSION = "2.9.8";
 
 const YOLO_CONFIG = {
   inputSize: 640,
-  intervalMs: 520,
+  intervalMs: 280,
   minConfidence: 0.28,
   modelUrl: "https://huggingface.co/webml/yolov8n/resolve/main/onnx/yolov8n.onnx",
   runtimePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/",
@@ -67,6 +67,14 @@ const state = {
   lastAlertAt: 0,
   smoothed: { motion: 0, global: 0, lower: 0 },
   baseline: { motion: 0, global: 0, lower: 0, samples: 0 },
+  brake: {
+    baseline: 0,
+    samples: 0,
+    lastScore: 0,
+    offSince: 0,
+    off: false,
+    updatedAt: 0,
+  },
   stoppedSeconds: 0,
   yolo: {
     session: null,
@@ -486,13 +494,14 @@ function analyzeCamera(now = performance.now()) {
   const frame = ctx.getImageData(0, 0, sampleWidth, sampleHeight).data;
   const gray = toGray(frame, sampleWidth, sampleHeight);
   const metrics = scoreMotion(gray, state.previousGray, sampleWidth, sampleHeight, roi);
+  const brake = analyzeBrakeLights(frame, sampleWidth, sampleHeight, now);
   state.previousGray = gray;
 
   if (state.yolo.ready) {
     scheduleYoloFrame(now);
   }
 
-  return mergeYoloMetrics(smoothMotionMetrics(metrics));
+  return mergeYoloMetrics({ ...smoothMotionMetrics(metrics), brake });
 }
 
 function analyzeDemo(now) {
@@ -577,6 +586,99 @@ function scoreRoiMotion(gray, previousGray, frameWidth, roi) {
   const top = cellScores.slice(0, 4);
   const topAverage = top.reduce((sum, value) => sum + value, 0) / top.length;
   return Math.min(100, Math.round(topAverage));
+}
+
+function analyzeBrakeLights(pixels, width, height, now) {
+  const target = state.yolo.lockedReference || state.yolo.target || state.yolo.previousTarget;
+  const lockedFrontCar = Boolean(target && (state.yolo.locked || state.armed || state.stoppedSince));
+
+  if (!lockedFrontCar) {
+    resetBrakeLightState();
+    state.brake.updatedAt = now;
+    return { score: 0, baseline: 0, off: false, updatedAt: now };
+  }
+
+  const score = scoreBrakeLightRegion(pixels, width, height, target);
+  const canLearnBrake =
+    score >= 14 &&
+    !state.brake.off &&
+    (state.stoppedSince || state.armed || state.yolo.stillMs >= 700);
+
+  if (canLearnBrake) {
+    const alpha = state.brake.samples < 4 ? 0.38 : 0.14;
+    state.brake.baseline = state.brake.samples
+      ? Math.max(score, state.brake.baseline * (1 - alpha) + score * alpha)
+      : score;
+    state.brake.samples += 1;
+  }
+
+  const canDetectOff =
+    state.brake.samples >= 3 &&
+    state.brake.baseline >= 18 &&
+    (state.armed || (state.stoppedSince && now - state.stoppedSince >= 1300));
+  const droppedEnough =
+    score <= Math.max(8, state.brake.baseline * 0.48) &&
+    state.brake.baseline - score >= 10;
+
+  if (canDetectOff && droppedEnough) {
+    if (!state.brake.offSince) state.brake.offSince = now;
+  } else {
+    state.brake.offSince = 0;
+  }
+
+  state.brake.lastScore = score;
+  state.brake.off = Boolean(state.brake.offSince && now - state.brake.offSince >= 80);
+  state.brake.updatedAt = now;
+
+  return {
+    score,
+    baseline: Math.round(state.brake.baseline),
+    off: state.brake.off,
+    updatedAt: now,
+  };
+}
+
+function scoreBrakeLightRegion(pixels, width, height, target) {
+  const left = clamp(Math.floor((target.x + target.w * 0.08) * width), 0, width - 1);
+  const right = clamp(Math.ceil((target.x + target.w * 0.92) * width), left + 1, width);
+  const top = clamp(Math.floor((target.y + target.h * 0.44) * height), 0, height - 1);
+  const bottom = clamp(Math.ceil((target.y + target.h * 0.94) * height), top + 1, height);
+  let redWeight = 0;
+  let redPixels = 0;
+  let samples = 0;
+
+  for (let y = top; y < bottom; y += 2) {
+    for (let x = left; x < right; x += 2) {
+      const i = (y * width + x) * 4;
+      const r = pixels[i];
+      const g = pixels[i + 1];
+      const b = pixels[i + 2];
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const delta = max - min;
+      samples += 1;
+
+      if (max < 54 || delta < 18) continue;
+
+      const sat = delta / max;
+      const val = max / 255;
+      if (sat < 0.24 || val < 0.18) continue;
+
+      const hue = rgbToHue(r, g, b, max, delta);
+      const redHue = hue <= 32 || hue >= 330;
+      const redDominant = r >= g * 1.22 && r >= b * 1.12;
+      if (!redHue || !redDominant) continue;
+
+      redPixels += 1;
+      redWeight += Math.pow(sat, 1.18) * Math.pow(val, 1.08) * 100;
+    }
+  }
+
+  if (!samples) return 0;
+
+  const averageRed = redWeight / samples;
+  const redRatio = redPixels / samples;
+  return Math.min(100, Math.round(averageRed * 2.15 + redRatio * 260));
 }
 
 function smoothMotionMetrics(metrics) {
@@ -1061,7 +1163,12 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
   const isStopped = stoppedByBaseline || stoppedBySharedShake || stoppedByYolo;
   const pixelFrontMotion = Math.min(100, Math.round(relativeMotion * 1.45));
   const yoloMotion = metrics.yolo ? metrics.yolo.motion : 0;
-  const frontMotion = Math.max(pixelFrontMotion, yoloMotion);
+  const brakeOff = Boolean(
+    metrics.brake?.off &&
+      (state.yolo.locked || state.armed) &&
+      metrics.brake.baseline >= 18,
+  );
+  const frontMotion = Math.max(pixelFrontMotion, yoloMotion, brakeOff ? 82 : 0);
   const hasFreshYolo = Boolean(metrics.yolo && performance.now() - metrics.yolo.updatedAt <= YOLO_CONFIG.intervalMs * 4);
   const yoloMoveThreshold = state.yolo.locked || state.armed ? 18 : Math.max(28, moveThreshold * 0.68);
   const yoloMoved = Boolean(
@@ -1078,7 +1185,7 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
   return {
     stability,
     frontMotion,
-    frontCarMoved: hasFreshYolo ? yoloMoved : pixelMoved,
+    frontCarMoved: brakeOff || (hasFreshYolo ? yoloMoved : pixelMoved),
     isStopped,
   };
 }
@@ -1117,8 +1224,18 @@ function resetMotionState() {
   state.baseline.global = 0;
   state.baseline.lower = 0;
   state.baseline.samples = 0;
+  resetBrakeLightState();
   resetYoloTracking();
   updateStopSeconds(0);
+}
+
+function resetBrakeLightState() {
+  state.brake.baseline = 0;
+  state.brake.samples = 0;
+  state.brake.lastScore = 0;
+  state.brake.offSince = 0;
+  state.brake.off = false;
+  state.brake.updatedAt = 0;
 }
 
 function resetYoloTracking() {
