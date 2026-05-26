@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.9.9";
+const APP_VERSION = "2.10.0";
 
 const YOLO_CONFIG = {
   inputSize: 640,
@@ -73,6 +73,14 @@ const state = {
     lastScore: 0,
     offSince: 0,
     off: false,
+    updatedAt: 0,
+  },
+  fastTarget: {
+    baseline: 0,
+    samples: 0,
+    overSince: 0,
+    moved: false,
+    motion: 0,
     updatedAt: 0,
   },
   stoppedSeconds: 0,
@@ -428,7 +436,7 @@ function analyzeFrame(now = performance.now()) {
     !state.armed &&
     state.stoppedSince &&
     now - state.stoppedSince >= 1600 &&
-    Boolean(metrics.yolo?.moved) &&
+    (Boolean(metrics.yolo?.moved) || Boolean(metrics.fastTarget?.moved) || Boolean(metrics.brake?.off)) &&
     derived.frontCarMoved;
 
   if (preArmedYoloMove) {
@@ -494,6 +502,7 @@ function analyzeCamera(now = performance.now()) {
   const frame = ctx.getImageData(0, 0, sampleWidth, sampleHeight).data;
   const gray = toGray(frame, sampleWidth, sampleHeight);
   const metrics = scoreMotion(gray, state.previousGray, sampleWidth, sampleHeight, roi);
+  const fastTarget = analyzeLockedTargetMotion(gray, state.previousGray, sampleWidth, sampleHeight, metrics, now);
   const brake = analyzeBrakeLights(frame, sampleWidth, sampleHeight, now);
   state.previousGray = gray;
 
@@ -501,7 +510,7 @@ function analyzeCamera(now = performance.now()) {
     scheduleYoloFrame(now);
   }
 
-  return mergeYoloMetrics({ ...smoothMotionMetrics(metrics), brake });
+  return mergeYoloMetrics({ ...smoothMotionMetrics(metrics), brake, fastTarget });
 }
 
 function analyzeDemo(now) {
@@ -586,6 +595,77 @@ function scoreRoiMotion(gray, previousGray, frameWidth, roi) {
   const top = cellScores.slice(0, 4);
   const topAverage = top.reduce((sum, value) => sum + value, 0) / top.length;
   return Math.min(100, Math.round(topAverage));
+}
+
+function analyzeLockedTargetMotion(gray, previousGray, width, height, metrics, now) {
+  const target = state.yolo.lockedReference || state.yolo.target || state.yolo.previousTarget;
+  const lockedFrontCar = Boolean(target && (state.yolo.locked || state.armed || state.stoppedSince));
+
+  if (!lockedFrontCar || !previousGray || previousGray.length !== gray.length) {
+    resetFastTargetState();
+    state.fastTarget.updatedAt = now;
+    return { motion: 0, relative: 0, moved: false, updatedAt: now };
+  }
+
+  const roi = targetToSampleRoi(target, width, height);
+  if (!roi) {
+    resetFastTargetState();
+    state.fastTarget.updatedAt = now;
+    return { motion: 0, relative: 0, moved: false, updatedAt: now };
+  }
+
+  const targetMotion = scoreRoiMotion(gray, previousGray, width, roi);
+  const sharedMotion = Math.max(metrics.globalMotion * 0.78, (metrics.lowerMotion || 0) * 0.54);
+  const relative = Math.max(0, targetMotion - sharedMotion);
+  const canLearn =
+    relative <= 11 &&
+    targetMotion <= Math.max(18, metrics.globalMotion + 12) &&
+    (state.stoppedSince || state.armed || state.yolo.stillMs >= 700);
+
+  if (canLearn) {
+    const alpha = state.fastTarget.samples < 5 ? 0.34 : 0.1;
+    state.fastTarget.baseline = state.fastTarget.samples
+      ? state.fastTarget.baseline * (1 - alpha) + relative * alpha
+      : relative;
+    state.fastTarget.samples += 1;
+  }
+
+  const baselineLimit = state.fastTarget.samples >= 3 ? state.fastTarget.baseline + 9 : 13;
+  const threshold = Math.max(12, baselineLimit);
+  const canTrigger = state.yolo.locked || state.armed || (state.stoppedSince && now - state.stoppedSince >= 1300);
+  const over = canTrigger && relative >= threshold && targetMotion >= Math.max(15, metrics.globalMotion + 5);
+
+  if (over) {
+    if (!state.fastTarget.overSince) state.fastTarget.overSince = now;
+  } else {
+    state.fastTarget.overSince = 0;
+  }
+
+  state.fastTarget.motion = Math.round(relative);
+  state.fastTarget.moved = Boolean(state.fastTarget.overSince && now - state.fastTarget.overSince >= 90);
+  state.fastTarget.updatedAt = now;
+
+  return {
+    motion: Math.round(relative),
+    rawMotion: targetMotion,
+    baseline: Math.round(state.fastTarget.baseline),
+    moved: state.fastTarget.moved,
+    updatedAt: now,
+  };
+}
+
+function targetToSampleRoi(target, width, height) {
+  const padX = target.w * 0.12;
+  const padY = target.h * 0.1;
+  const x = clamp(Math.floor((target.x - padX) * width), 0, width - 1);
+  const y = clamp(Math.floor((target.y - padY) * height), 0, height - 1);
+  const right = clamp(Math.ceil((target.x + target.w + padX) * width), x + 2, width);
+  const bottom = clamp(Math.ceil((target.y + target.h + padY) * height), y + 2, height);
+  const w = right - x;
+  const h = bottom - y;
+
+  if (w < 8 || h < 8) return null;
+  return { x, y, w, h };
 }
 
 function analyzeBrakeLights(pixels, width, height, now) {
@@ -1168,7 +1248,9 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
       (state.yolo.locked || state.armed) &&
       metrics.brake.baseline >= 18,
   );
-  const frontMotion = Math.max(pixelFrontMotion, yoloMotion, brakeOff ? 82 : 0);
+  const fastTargetMoved = Boolean(metrics.fastTarget?.moved && (state.yolo.locked || state.armed || state.stoppedSince));
+  const fastTargetMotion = metrics.fastTarget ? metrics.fastTarget.motion : 0;
+  const frontMotion = Math.max(pixelFrontMotion, yoloMotion, fastTargetMotion, brakeOff ? 82 : 0);
   const hasFreshYolo = Boolean(metrics.yolo && performance.now() - metrics.yolo.updatedAt <= YOLO_CONFIG.intervalMs * 4);
   const yoloMoveThreshold = state.yolo.locked || state.armed ? 18 : Math.max(28, moveThreshold * 0.68);
   const yoloMoved = Boolean(
@@ -1185,7 +1267,7 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
   return {
     stability,
     frontMotion,
-    frontCarMoved: brakeOff || (hasFreshYolo ? yoloMoved : pixelMoved),
+    frontCarMoved: brakeOff || fastTargetMoved || (hasFreshYolo ? yoloMoved : pixelMoved),
     isStopped,
   };
 }
@@ -1225,6 +1307,7 @@ function resetMotionState() {
   state.baseline.lower = 0;
   state.baseline.samples = 0;
   resetBrakeLightState();
+  resetFastTargetState();
   resetYoloTracking();
   updateStopSeconds(0);
 }
@@ -1236,6 +1319,15 @@ function resetBrakeLightState() {
   state.brake.offSince = 0;
   state.brake.off = false;
   state.brake.updatedAt = 0;
+}
+
+function resetFastTargetState() {
+  state.fastTarget.baseline = 0;
+  state.fastTarget.samples = 0;
+  state.fastTarget.overSince = 0;
+  state.fastTarget.moved = false;
+  state.fastTarget.motion = 0;
+  state.fastTarget.updatedAt = 0;
 }
 
 function resetYoloTracking() {
