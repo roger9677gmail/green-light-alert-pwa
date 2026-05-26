@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.9.6";
+const APP_VERSION = "2.9.7";
 
 const YOLO_CONFIG = {
   inputSize: 640,
@@ -85,6 +85,7 @@ const state = {
     stableSince: 0,
     stillMs: 0,
     locked: false,
+    lockedReference: null,
   },
 };
 
@@ -896,6 +897,7 @@ function vehicleLabel(classId) {
 
 function updateYoloMotion(target, detectionCount) {
   const previous = state.yolo.previousTarget;
+  const reference = state.yolo.lockedReference;
   const now = performance.now();
 
   if (!target) {
@@ -927,6 +929,9 @@ function updateYoloMotion(target, detectionCount) {
   let normalizedShift = 0;
   let areaChange = 0;
   let overlapChange = 0;
+  let referenceShift = 0;
+  let referenceAreaChange = 0;
+  let referenceOverlapChange = 0;
 
   if (previous) {
     const dx = target.cx - previous.cx;
@@ -937,18 +942,44 @@ function updateYoloMotion(target, detectionCount) {
     areaChange = Math.abs(target.area - previous.area) / Math.max(previous.area, 0.01);
     overlapChange = 1 - boxIou(target, previous);
 
-    rawMotion = Math.min(
+    const frameRawMotion = Math.min(
       100,
       Math.round(normalizedShift * 460 + areaChange * 72 + overlapChange * 28),
     );
     const lockedOrArmed = state.yolo.locked || state.armed;
-    const motionThreshold = lockedOrArmed ? 38 : 30;
-    const shiftThreshold = lockedOrArmed ? 0.095 : 0.08;
-    const areaThreshold = lockedOrArmed ? 0.26 : 0.22;
-    moved = rawMotion >= motionThreshold || normalizedShift >= shiftThreshold || areaChange >= areaThreshold;
+    rawMotion = frameRawMotion;
+
+    if (lockedOrArmed && reference) {
+      const refDx = target.cx - reference.cx;
+      const refDy = target.cy - reference.cy;
+      referenceShift = Math.sqrt(refDx * refDx + refDy * refDy) / Math.sqrt(2);
+      referenceAreaChange = Math.abs(target.area - reference.area) / Math.max(reference.area, 0.01);
+      referenceOverlapChange = 1 - boxIou(target, reference);
+      const referenceRawMotion = Math.min(
+        100,
+        Math.round(referenceShift * 520 + referenceAreaChange * 96 + referenceOverlapChange * 18),
+      );
+      rawMotion = Math.max(frameRawMotion, referenceRawMotion);
+    }
+
+    const motionThreshold = lockedOrArmed ? 24 : 30;
+    const shiftThreshold = lockedOrArmed ? 0.048 : 0.08;
+    const areaThreshold = lockedOrArmed ? 0.12 : 0.22;
+    const referenceMoved =
+      lockedOrArmed &&
+      reference &&
+      (referenceShift >= shiftThreshold ||
+        referenceAreaChange >= areaThreshold ||
+        referenceOverlapChange >= 0.36);
+    moved =
+      rawMotion >= motionThreshold ||
+      normalizedShift >= (lockedOrArmed ? 0.072 : 0.08) ||
+      areaChange >= (lockedOrArmed ? 0.18 : 0.22) ||
+      referenceMoved;
   }
 
-  state.yolo.smoothMotion = state.yolo.smoothMotion * 0.45 + rawMotion * 0.55;
+  const smoothing = state.yolo.locked || state.armed ? 0.72 : 0.55;
+  state.yolo.smoothMotion = state.yolo.smoothMotion * (1 - smoothing) + rawMotion * smoothing;
   const stable =
     !moved &&
     state.yolo.smoothMotion <= 18 &&
@@ -961,10 +992,14 @@ function updateYoloMotion(target, detectionCount) {
     state.yolo.stillMs = now - state.yolo.stableSince;
     if (state.yolo.stillMs >= 900 || state.armed || state.stoppedSince) {
       state.yolo.locked = true;
+      if (!state.yolo.lockedReference || state.yolo.stillMs < 1300) {
+        state.yolo.lockedReference = target;
+      }
     }
   } else {
     if (!state.armed && !state.stoppedSince) {
       state.yolo.locked = false;
+      state.yolo.lockedReference = null;
     }
     state.yolo.stableSince = 0;
     state.yolo.stillMs = 0;
@@ -974,6 +1009,7 @@ function updateYoloMotion(target, detectionCount) {
     hasTarget: true,
     moved,
     motion: Math.round(state.yolo.smoothMotion),
+    rawMotion: Math.round(rawMotion),
     stable,
     stillMs: Math.round(state.yolo.stillMs),
     confidence: Math.round(target.confidence * 100),
@@ -1027,7 +1063,11 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
   const yoloMotion = metrics.yolo ? metrics.yolo.motion : 0;
   const frontMotion = Math.max(pixelFrontMotion, yoloMotion);
   const hasFreshYolo = Boolean(metrics.yolo && performance.now() - metrics.yolo.updatedAt <= YOLO_CONFIG.intervalMs * 4);
-  const yoloMoved = Boolean(metrics.yolo?.moved && yoloMotion >= Math.max(28, moveThreshold * 0.68));
+  const yoloMoveThreshold = state.yolo.locked || state.armed ? 18 : Math.max(28, moveThreshold * 0.68);
+  const yoloMoved = Boolean(
+    metrics.yolo?.moved &&
+      (yoloMotion >= yoloMoveThreshold || (state.yolo.locked && metrics.yolo.rawMotion >= 24)),
+  );
   const pixelMoved = pixelFrontMotion > moveThreshold && relativeMotion > tolerance * 0.85;
   const stability = stoppedByYolo
     ? Math.max(72, Math.min(100, 100 - yoloMotion))
@@ -1091,6 +1131,7 @@ function resetYoloTracking() {
   state.yolo.stableSince = 0;
   state.yolo.stillMs = 0;
   state.yolo.locked = false;
+  state.yolo.lockedReference = null;
   renderYoloDetections([]);
 }
 
