@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.9.8";
+const APP_VERSION = "2.9.9";
 
 const YOLO_CONFIG = {
   inputSize: 640,
