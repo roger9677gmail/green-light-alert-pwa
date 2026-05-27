@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.11.4";
+const APP_VERSION = "2.11.5";
 const DEBUG_ENABLED = new URLSearchParams(window.location.search).has("debug");
 
 const YOLO_CONFIG = {
@@ -81,6 +81,7 @@ const state = {
     baseline: 0,
     samples: 0,
     overSince: 0,
+    overKind: "",
     moved: false,
     motion: 0,
     updatedAt: 0,
@@ -700,22 +701,33 @@ function analyzeLockedTargetMotion(gray, previousGray, width, height, metrics, n
     targetStats.activeCells >= 5 &&
     targetStats.rowSpread >= 2 &&
     targetStats.colSpread >= 2;
+  const broadWholeMotion =
+    broadEnough &&
+    targetStats.activeCells >= 9 &&
+    targetStats.activeRatio >= 0.34 &&
+    relative >= threshold + 3;
   const canTrigger = state.armed;
+  const overKind = coherentShift ? "shift" : broadWholeMotion ? "broad" : "";
   const over =
     canTrigger &&
-    ((broadEnough && relative >= threshold) ||
-      (coherentShift && relative >= threshold * 0.58)) &&
+    (overKind === "shift" || overKind === "broad") &&
+    (overKind === "shift" ? relative >= threshold * 0.58 : relative >= threshold + 3) &&
     targetMotion >= Math.max(15, metrics.globalMotion + 5);
 
   if (over) {
-    if (!state.fastTarget.overSince) state.fastTarget.overSince = now;
+    if (!state.fastTarget.overSince || state.fastTarget.overKind !== overKind) {
+      state.fastTarget.overSince = now;
+      state.fastTarget.overKind = overKind;
+    }
   } else {
     state.fastTarget.overSince = 0;
+    state.fastTarget.overKind = "";
   }
 
+  const confirmationMs = state.fastTarget.overKind === "shift" ? 0 : 220;
   state.fastTarget.motion = Math.round(relative);
   state.fastTarget.moved = Boolean(
-    state.fastTarget.overSince && (coherentShift || now - state.fastTarget.overSince >= 45),
+    state.fastTarget.overSince && now - state.fastTarget.overSince >= confirmationMs,
   );
   state.fastTarget.updatedAt = now;
 
@@ -1546,6 +1558,7 @@ function resetFastTargetState() {
   state.fastTarget.baseline = 0;
   state.fastTarget.samples = 0;
   state.fastTarget.overSince = 0;
+  state.fastTarget.overKind = "";
   state.fastTarget.moved = false;
   state.fastTarget.motion = 0;
   state.fastTarget.updatedAt = 0;
