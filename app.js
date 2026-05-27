@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.11.1";
+const APP_VERSION = "2.11.4";
 const DEBUG_ENABLED = new URLSearchParams(window.location.search).has("debug");
 
 const YOLO_CONFIG = {
@@ -475,7 +475,7 @@ function analyzeFrame(now = performance.now()) {
       setStatus(els.demoToggle.checked ? "demo" : "watching");
       setMessage("監看中。車身或前車尚未穩定停止。");
     }
-  } else if (derived.frontCarMoved) {
+  } else if (derived.frontCarMoved && (!state.armedAt || now - state.armedAt >= 300)) {
     setStatus("moving");
     triggerAlert("前車移動了");
     state.alertHoldUntil = now + 3200;
@@ -1463,12 +1463,21 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
       fastTargetMotion >= 18 &&
       metrics.fastTarget?.activeCells >= 6,
   );
+  const yoloTrackedWithTargetMotion = Boolean(
+    yoloHasTrackedTarget &&
+      fastTargetMotion >= 16 &&
+      metrics.fastTarget?.activeCells >= 6,
+  );
   const yoloMoved = Boolean(
     metrics.yolo?.moved &&
-      (yoloHasTrackedTarget || yoloMissingWithTargetMotion) &&
+      (state.armed ? yoloTrackedWithTargetMotion || yoloMissingWithTargetMotion : yoloHasTrackedTarget) &&
       (yoloMotion >= yoloMoveThreshold || (state.yolo.locked && metrics.yolo.rawMotion >= 24)),
   );
-  const pixelMoved = pixelFrontMotion > moveThreshold && relativeMotion > tolerance * 0.85;
+  const allowPixelFallback = !state.yolo.ready || (!state.armed && !state.yolo.locked);
+  const pixelMoved =
+    allowPixelFallback &&
+    pixelFrontMotion > moveThreshold &&
+    relativeMotion > tolerance * 0.85;
   const stability = stoppedByYolo
     ? Math.max(72, Math.min(100, 100 - yoloMotion))
     : isStopped
@@ -1478,7 +1487,7 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
   return {
     stability,
     frontMotion,
-    frontCarMoved: brakeOff || fastTargetMoved || (hasFreshYolo ? yoloMoved : pixelMoved),
+    frontCarMoved: brakeOff || fastTargetMoved || yoloMoved || pixelMoved,
     isStopped,
   };
 }
