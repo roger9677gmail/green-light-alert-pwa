@@ -1,10 +1,11 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.10.1";
+const APP_VERSION = "2.11.1";
+const DEBUG_ENABLED = new URLSearchParams(window.location.search).has("debug");
 
 const YOLO_CONFIG = {
   inputSize: 640,
-  intervalMs: 220,
+  intervalMs: 160,
   minConfidence: 0.28,
   modelUrl: "https://huggingface.co/webml/yolov8n/resolve/main/onnx/yolov8n.onnx",
   runtimePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/",
@@ -65,6 +66,7 @@ const state = {
   demoStart: 0,
   alertHoldUntil: 0,
   lastAlertAt: 0,
+  armedAt: 0,
   smoothed: { motion: 0, global: 0, lower: 0 },
   baseline: { motion: 0, global: 0, lower: 0, samples: 0 },
   brake: {
@@ -102,6 +104,10 @@ const state = {
     stillMs: 0,
     locked: false,
     lockedReference: null,
+  },
+  debug: {
+    lastKey: "",
+    events: [],
   },
 };
 
@@ -324,6 +330,13 @@ async function toggleDetection() {
   closeAbout();
   updateLayoutMetrics();
   resetMotionState();
+  if (DEBUG_ENABLED) {
+    window.__frontCarDebugLog = [];
+    window.__frontCarDebug = null;
+    state.debug.lastKey = "";
+    state.debug.events = [];
+    writeDebugState(null);
+  }
   state.lastAlertAt = 0;
   els.startBtn.textContent = "停止偵測";
   const audioReady = await unlockAudio();
@@ -354,7 +367,9 @@ async function toggleDetection() {
 }
 
 async function startCamera() {
-  const testVideoUrl = new URLSearchParams(window.location.search).get("testVideo");
+  const params = new URLSearchParams(window.location.search);
+  const testVideoUrl = params.get("testVideo");
+  const testTime = Number(params.get("testTime"));
   const canUseLocalTestVideo =
     testVideoUrl && ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
@@ -364,6 +379,12 @@ async function startCamera() {
     els.video.loop = true;
     els.video.muted = true;
     els.video.playsInline = true;
+    els.video.load();
+    await waitForVideoMetadata();
+    if (Number.isFinite(testTime) && testTime > 0) {
+      els.video.currentTime = testTime;
+      await waitForVideoSeek();
+    }
     await els.video.play();
     els.demoLight.classList.remove("active");
     setStatus("camera");
@@ -431,6 +452,7 @@ function analyzeFrame(now = performance.now()) {
   const tolerance = Number(els.vibrationTolerance.value);
   const derived = deriveMotionState(metrics, sensitivity, tolerance);
   updateMeters(derived.stability, derived.frontMotion);
+  publishDebugFrame(now, metrics, derived);
 
   if (!state.armed) {
     learnVibrationBaseline(metrics, tolerance);
@@ -442,11 +464,13 @@ function analyzeFrame(now = performance.now()) {
       setMessage(`停止穩定 ${Math.min(stopSeconds, Math.floor(stoppedMs / 1000))}/${stopSeconds} 秒。`);
       if (stoppedMs >= stopSeconds * 1000) {
         state.armed = true;
+        state.armedAt = now;
         setStatus("armed");
         setMessage("已待提醒。前車移動時會發出提示。");
       }
     } else {
       state.stoppedSince = 0;
+      state.armedAt = 0;
       updateStopSeconds(0);
       setStatus(els.demoToggle.checked ? "demo" : "watching");
       setMessage("監看中。車身或前車尚未穩定停止。");
@@ -456,6 +480,7 @@ function analyzeFrame(now = performance.now()) {
     triggerAlert("前車移動了");
     state.alertHoldUntil = now + 3200;
     state.armed = false;
+    state.armedAt = 0;
     state.stoppedSince = 0;
     updateStopSeconds(0);
   } else {
@@ -497,6 +522,49 @@ function analyzeCamera(now = performance.now()) {
   }
 
   return mergeYoloMetrics({ ...smoothMotionMetrics(metrics), brake, fastTarget });
+}
+
+function waitForVideoMetadata() {
+  if (els.video.readyState >= 1) return Promise.resolve();
+
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      els.video.removeEventListener("loadedmetadata", done);
+      els.video.removeEventListener("error", fail);
+    };
+    const done = () => {
+      cleanup();
+      resolve();
+    };
+    const fail = () => {
+      cleanup();
+      reject(new Error("測試影片無法載入"));
+    };
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("測試影片載入逾時"));
+    }, 5000);
+
+    els.video.addEventListener("loadedmetadata", done, { once: true });
+    els.video.addEventListener("error", fail, { once: true });
+  });
+}
+
+function waitForVideoSeek() {
+  if (!els.video.seeking) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(resolve, 1200);
+    els.video.addEventListener(
+      "seeked",
+      () => {
+        window.clearTimeout(timeout);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }
 
 function analyzeDemo(now) {
@@ -601,6 +669,7 @@ function analyzeLockedTargetMotion(gray, previousGray, width, height, metrics, n
   }
 
   const targetStats = scoreTargetMotionSpread(gray, previousGray, width, roi);
+  const shiftStats = estimateTargetShift(gray, previousGray, width, height, roi);
   const targetMotion = targetStats.motion;
   const sharedMotion = Math.max(metrics.globalMotion * 0.78, (metrics.lowerMotion || 0) * 0.54);
   const relative = Math.max(0, targetMotion - sharedMotion);
@@ -624,11 +693,18 @@ function analyzeLockedTargetMotion(gray, previousGray, width, height, metrics, n
     targetStats.activeRatio >= 0.28 &&
     targetStats.rowSpread >= 2 &&
     targetStats.colSpread >= 3;
+  const coherentShift =
+    shiftStats.shift >= 1.4 &&
+    shiftStats.strength >= 3.2 &&
+    shiftStats.coverage >= 0.62 &&
+    targetStats.activeCells >= 5 &&
+    targetStats.rowSpread >= 2 &&
+    targetStats.colSpread >= 2;
   const canTrigger = state.armed;
   const over =
     canTrigger &&
-    broadEnough &&
-    relative >= threshold &&
+    ((broadEnough && relative >= threshold) ||
+      (coherentShift && relative >= threshold * 0.58)) &&
     targetMotion >= Math.max(15, metrics.globalMotion + 5);
 
   if (over) {
@@ -638,7 +714,9 @@ function analyzeLockedTargetMotion(gray, previousGray, width, height, metrics, n
   }
 
   state.fastTarget.motion = Math.round(relative);
-  state.fastTarget.moved = Boolean(state.fastTarget.overSince && now - state.fastTarget.overSince >= 70);
+  state.fastTarget.moved = Boolean(
+    state.fastTarget.overSince && (coherentShift || now - state.fastTarget.overSince >= 45),
+  );
   state.fastTarget.updatedAt = now;
 
   return {
@@ -647,6 +725,8 @@ function analyzeLockedTargetMotion(gray, previousGray, width, height, metrics, n
     baseline: Math.round(state.fastTarget.baseline),
     activeRatio: targetStats.activeRatio,
     activeCells: targetStats.activeCells,
+    shift: shiftStats.shift,
+    shiftStrength: shiftStats.strength,
     moved: state.fastTarget.moved,
     updatedAt: now,
   };
@@ -715,6 +795,64 @@ function scoreTargetMotionSpread(gray, previousGray, frameWidth, roi) {
     activeRatio: samplePixels ? activePixels / samplePixels : 0,
     rowSpread: activeRows.size,
     colSpread: activeCols.size,
+  };
+}
+
+function estimateTargetShift(gray, previousGray, frameWidth, frameHeight, roi) {
+  const maxShift = Math.max(2, Math.min(7, Math.round(Math.min(roi.w, roi.h) * 0.08)));
+  const step = Math.max(2, Math.round(Math.min(roi.w, roi.h) / 18));
+  let baseDiff = 0;
+  let baseSamples = 0;
+  let bestDiff = Infinity;
+  let bestDx = 0;
+  let bestDy = 0;
+  let bestSamples = 0;
+
+  for (let y = roi.y + maxShift; y < roi.y + roi.h - maxShift; y += step) {
+    for (let x = roi.x + maxShift; x < roi.x + roi.w - maxShift; x += step) {
+      const i = y * frameWidth + x;
+      baseDiff += Math.abs(gray[i] - previousGray[i]);
+      baseSamples += 1;
+    }
+  }
+
+  if (baseSamples < 24) return { shift: 0, strength: 0, coverage: 0, dx: 0, dy: 0 };
+
+  baseDiff /= baseSamples;
+
+  for (let dy = -maxShift; dy <= maxShift; dy += 1) {
+    for (let dx = -maxShift; dx <= maxShift; dx += 1) {
+      if (!dx && !dy) continue;
+      let diff = 0;
+      let samples = 0;
+
+      for (let y = roi.y + maxShift; y < roi.y + roi.h - maxShift; y += step) {
+        const shiftedY = y + dy;
+        if (shiftedY < 0 || shiftedY >= frameHeight) continue;
+        for (let x = roi.x + maxShift; x < roi.x + roi.w - maxShift; x += step) {
+          const shiftedX = x + dx;
+          if (shiftedX < 0 || shiftedX >= frameWidth) continue;
+          diff += Math.abs(gray[shiftedY * frameWidth + shiftedX] - previousGray[y * frameWidth + x]);
+          samples += 1;
+        }
+      }
+
+      if (samples && diff / samples < bestDiff) {
+        bestDiff = diff / samples;
+        bestDx = dx;
+        bestDy = dy;
+        bestSamples = samples;
+      }
+    }
+  }
+
+  const improvement = Math.max(0, baseDiff - bestDiff);
+  return {
+    shift: Math.sqrt(bestDx * bestDx + bestDy * bestDy),
+    strength: improvement * 2.8,
+    coverage: bestSamples / baseSamples,
+    dx: bestDx,
+    dy: bestDy,
   };
 }
 
@@ -1197,17 +1335,29 @@ function updateYoloMotion(target, detectionCount) {
     const motionThreshold = lockedOrArmed ? 24 : 30;
     const shiftThreshold = lockedOrArmed ? 0.048 : 0.08;
     const areaThreshold = lockedOrArmed ? 0.12 : 0.22;
+    const referenceIdentity =
+      !reference ||
+      (target.classId === reference.classId &&
+        (boxIou(target, reference) >= 0.16 ||
+          referenceShift <= 0.13 ||
+          referenceOverlapChange <= 0.62));
     const referenceMoved =
       lockedOrArmed &&
       reference &&
+      referenceIdentity &&
       (referenceShift >= shiftThreshold ||
         referenceAreaChange >= areaThreshold ||
         referenceOverlapChange >= 0.36);
     moved =
-      rawMotion >= motionThreshold ||
-      normalizedShift >= (lockedOrArmed ? 0.072 : 0.08) ||
-      areaChange >= (lockedOrArmed ? 0.18 : 0.22) ||
-      referenceMoved;
+      lockedOrArmed && reference
+        ? referenceMoved ||
+          (referenceIdentity &&
+            (rawMotion >= motionThreshold + 8 ||
+              referenceShift >= shiftThreshold * 1.15 ||
+              referenceAreaChange >= areaThreshold * 1.12))
+        : rawMotion >= motionThreshold ||
+          normalizedShift >= 0.08 ||
+          areaChange >= 0.22;
   }
 
   const smoothing = state.yolo.locked || state.armed ? 0.72 : 0.55;
@@ -1242,6 +1392,9 @@ function updateYoloMotion(target, detectionCount) {
     moved,
     motion: Math.round(state.yolo.smoothMotion),
     rawMotion: Math.round(rawMotion),
+    referenceShift: Math.round(referenceShift * 1000) / 1000,
+    referenceAreaChange: Math.round(referenceAreaChange * 1000) / 1000,
+    referenceOverlapChange: Math.round(referenceOverlapChange * 1000) / 1000,
     stable,
     stillMs: Math.round(state.yolo.stillMs),
     confidence: Math.round(target.confidence * 100),
@@ -1303,8 +1456,16 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
   const frontMotion = Math.max(pixelFrontMotion, yoloMotion, fastTargetMotion, brakeOff ? 82 : 0);
   const hasFreshYolo = Boolean(metrics.yolo && performance.now() - metrics.yolo.updatedAt <= YOLO_CONFIG.intervalMs * 4);
   const yoloMoveThreshold = state.yolo.locked || state.armed ? 18 : Math.max(28, moveThreshold * 0.68);
+  const yoloHasTrackedTarget = Boolean(metrics.yolo?.hasTarget);
+  const yoloMissingWithTargetMotion = Boolean(
+    metrics.yolo?.moved &&
+      !yoloHasTrackedTarget &&
+      fastTargetMotion >= 18 &&
+      metrics.fastTarget?.activeCells >= 6,
+  );
   const yoloMoved = Boolean(
     metrics.yolo?.moved &&
+      (yoloHasTrackedTarget || yoloMissingWithTargetMotion) &&
       (yoloMotion >= yoloMoveThreshold || (state.yolo.locked && metrics.yolo.rawMotion >= 24)),
   );
   const pixelMoved = pixelFrontMotion > moveThreshold && relativeMotion > tolerance * 0.85;
@@ -1347,6 +1508,7 @@ function resetMotionState() {
   state.previousGray = null;
   state.stoppedSince = 0;
   state.armed = false;
+  state.armedAt = 0;
   state.demoStart = 0;
   state.alertHoldUntil = 0;
   state.smoothed.motion = 0;
@@ -1771,6 +1933,73 @@ function setStatus(status) {
 
 function setMessage(text) {
   els.message.textContent = text;
+}
+
+function publishDebugFrame(now, metrics, derived) {
+  if (!DEBUG_ENABLED) return;
+
+  const frame = {
+    now: Math.round(now),
+    videoTime: Math.round((els.video.currentTime || 0) * 1000) / 1000,
+    running: state.running,
+    armed: state.armed,
+    armedAt: Math.round(state.armedAt || 0),
+    stoppedSince: Math.round(state.stoppedSince || 0),
+    stoppedSeconds: state.stoppedSeconds,
+    status: els.stateBadge.textContent,
+    message: els.message.textContent,
+    metrics: {
+      motion: metrics.motion,
+      globalMotion: metrics.globalMotion,
+      lowerMotion: metrics.lowerMotion,
+      yolo: metrics.yolo || null,
+      brake: metrics.brake || null,
+      fastTarget: metrics.fastTarget || null,
+    },
+    derived,
+  };
+
+  window.__frontCarDebug = frame;
+  if (!window.__frontCarDebugLog) window.__frontCarDebugLog = [];
+  window.__frontCarDebugLog.push(frame);
+  if (window.__frontCarDebugLog.length > 900) {
+    window.__frontCarDebugLog.splice(0, window.__frontCarDebugLog.length - 900);
+  }
+
+  const eventKey = `${frame.status}|${frame.stoppedSeconds}|${frame.message}|${derived.frontCarMoved}`;
+  if (eventKey !== state.debug.lastKey) {
+    state.debug.events.push({
+      videoTime: frame.videoTime,
+      status: frame.status,
+      stoppedSeconds: frame.stoppedSeconds,
+      message: frame.message,
+      frontMotion: derived.frontMotion,
+      frontCarMoved: derived.frontCarMoved,
+      isStopped: derived.isStopped,
+      yolo: metrics.yolo || null,
+      fastTarget: metrics.fastTarget || null,
+      brake: metrics.brake || null,
+    });
+    if (state.debug.events.length > 120) {
+      state.debug.events.splice(0, state.debug.events.length - 120);
+    }
+    state.debug.lastKey = eventKey;
+  }
+
+  writeDebugState({ last: frame, events: state.debug.events });
+}
+
+function writeDebugState(payload) {
+  if (!DEBUG_ENABLED) return;
+
+  let element = document.getElementById("debugState");
+  if (!element) {
+    element = document.createElement("script");
+    element.id = "debugState";
+    element.type = "application/json";
+    document.body.appendChild(element);
+  }
+  element.textContent = payload ? JSON.stringify(payload) : "";
 }
 
 function isCameraSecureContext() {
