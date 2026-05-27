@@ -1,10 +1,10 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.10.0";
+const APP_VERSION = "2.10.1";
 
 const YOLO_CONFIG = {
   inputSize: 640,
-  intervalMs: 280,
+  intervalMs: 220,
   minConfidence: 0.28,
   modelUrl: "https://huggingface.co/webml/yolov8n/resolve/main/onnx/yolov8n.onnx",
   runtimePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/",
@@ -151,7 +151,11 @@ function bindControls() {
   });
   els.autoToggle.addEventListener("change", () => {
     resetMotionState();
-    setMessage(els.autoToggle.checked ? "自動模式會在停止超過設定秒數後進入待提醒。" : "自動已關閉，會直接監看前車移動。");
+    setMessage(
+      els.autoToggle.checked
+        ? "自動模式會在停止超過設定秒數後進入待提醒。"
+        : "自動已關閉，仍需停止達設定秒數後才會待提醒。",
+    );
   });
 
   bindOutsidePanelClose();
@@ -428,25 +432,7 @@ function analyzeFrame(now = performance.now()) {
   const derived = deriveMotionState(metrics, sensitivity, tolerance);
   updateMeters(derived.stability, derived.frontMotion);
 
-  if (!els.autoToggle.checked) {
-    state.armed = true;
-  }
-
-  const preArmedYoloMove =
-    !state.armed &&
-    state.stoppedSince &&
-    now - state.stoppedSince >= 1600 &&
-    (Boolean(metrics.yolo?.moved) || Boolean(metrics.fastTarget?.moved) || Boolean(metrics.brake?.off)) &&
-    derived.frontCarMoved;
-
-  if (preArmedYoloMove) {
-    setStatus("moving");
-    triggerAlert("前車移動了");
-    state.alertHoldUntil = now + 3200;
-    state.armed = false;
-    state.stoppedSince = 0;
-    updateStopSeconds(0);
-  } else if (!state.armed) {
+  if (!state.armed) {
     learnVibrationBaseline(metrics, tolerance);
     if (derived.isStopped) {
       if (!state.stoppedSince) state.stoppedSince = now;
@@ -614,7 +600,8 @@ function analyzeLockedTargetMotion(gray, previousGray, width, height, metrics, n
     return { motion: 0, relative: 0, moved: false, updatedAt: now };
   }
 
-  const targetMotion = scoreRoiMotion(gray, previousGray, width, roi);
+  const targetStats = scoreTargetMotionSpread(gray, previousGray, width, roi);
+  const targetMotion = targetStats.motion;
   const sharedMotion = Math.max(metrics.globalMotion * 0.78, (metrics.lowerMotion || 0) * 0.54);
   const relative = Math.max(0, targetMotion - sharedMotion);
   const canLearn =
@@ -632,8 +619,17 @@ function analyzeLockedTargetMotion(gray, previousGray, width, height, metrics, n
 
   const baselineLimit = state.fastTarget.samples >= 3 ? state.fastTarget.baseline + 9 : 13;
   const threshold = Math.max(12, baselineLimit);
-  const canTrigger = state.yolo.locked || state.armed || (state.stoppedSince && now - state.stoppedSince >= 1300);
-  const over = canTrigger && relative >= threshold && targetMotion >= Math.max(15, metrics.globalMotion + 5);
+  const broadEnough =
+    targetStats.activeCells >= 6 &&
+    targetStats.activeRatio >= 0.28 &&
+    targetStats.rowSpread >= 2 &&
+    targetStats.colSpread >= 3;
+  const canTrigger = state.armed;
+  const over =
+    canTrigger &&
+    broadEnough &&
+    relative >= threshold &&
+    targetMotion >= Math.max(15, metrics.globalMotion + 5);
 
   if (over) {
     if (!state.fastTarget.overSince) state.fastTarget.overSince = now;
@@ -642,13 +638,15 @@ function analyzeLockedTargetMotion(gray, previousGray, width, height, metrics, n
   }
 
   state.fastTarget.motion = Math.round(relative);
-  state.fastTarget.moved = Boolean(state.fastTarget.overSince && now - state.fastTarget.overSince >= 90);
+  state.fastTarget.moved = Boolean(state.fastTarget.overSince && now - state.fastTarget.overSince >= 70);
   state.fastTarget.updatedAt = now;
 
   return {
     motion: Math.round(relative),
     rawMotion: targetMotion,
     baseline: Math.round(state.fastTarget.baseline),
+    activeRatio: targetStats.activeRatio,
+    activeCells: targetStats.activeCells,
     moved: state.fastTarget.moved,
     updatedAt: now,
   };
@@ -666,6 +664,58 @@ function targetToSampleRoi(target, width, height) {
 
   if (w < 8 || h < 8) return null;
   return { x, y, w, h };
+}
+
+function scoreTargetMotionSpread(gray, previousGray, frameWidth, roi) {
+  const cellsX = 5;
+  const cellsY = 4;
+  const sums = new Float32Array(cellsX * cellsY);
+  const counts = new Uint16Array(cellsX * cellsY);
+
+  for (let y = roi.y; y < roi.y + roi.h; y += 1) {
+    for (let x = roi.x; x < roi.x + roi.w; x += 1) {
+      const frameIndex = y * frameWidth + x;
+      const diff = Math.abs(gray[frameIndex] - previousGray[frameIndex]);
+      const cx = Math.min(cellsX - 1, Math.floor(((x - roi.x) / roi.w) * cellsX));
+      const cy = Math.min(cellsY - 1, Math.floor(((y - roi.y) / roi.h) * cellsY));
+      const cell = cy * cellsX + cx;
+      sums[cell] += diff;
+      counts[cell] += 1;
+    }
+  }
+
+  const scores = [];
+  let activeCells = 0;
+  let activePixels = 0;
+  let samplePixels = 0;
+  const activeRows = new Set();
+  const activeCols = new Set();
+
+  for (let i = 0; i < sums.length; i += 1) {
+    if (!counts[i]) continue;
+    const score = (sums[i] / counts[i]) * 3.1;
+    scores.push(score);
+    samplePixels += counts[i];
+
+    if (score >= 13) {
+      activeCells += 1;
+      activePixels += counts[i];
+      activeRows.add(Math.floor(i / cellsX));
+      activeCols.add(i % cellsX);
+    }
+  }
+
+  scores.sort((a, b) => b - a);
+  const topCount = Math.min(10, scores.length);
+  const topAverage = scores.slice(0, topCount).reduce((sum, value) => sum + value, 0) / Math.max(1, topCount);
+
+  return {
+    motion: Math.min(100, Math.round(topAverage)),
+    activeCells,
+    activeRatio: samplePixels ? activePixels / samplePixels : 0,
+    rowSpread: activeRows.size,
+    colSpread: activeCols.size,
+  };
 }
 
 function analyzeBrakeLights(pixels, width, height, now) {
