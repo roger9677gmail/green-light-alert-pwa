@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.11.5";
+const APP_VERSION = "2.12.0";
 const DEBUG_ENABLED = new URLSearchParams(window.location.search).has("debug");
 
 const YOLO_CONFIG = {
@@ -1186,19 +1186,23 @@ function selectBestVehicle(detections) {
 
 function selectTrackedVehicle(detections) {
   const previous = state.yolo.previousTarget;
-  if (!previous) return selectBestVehicle(detections);
-
   const locked = state.armed || Boolean(state.stoppedSince) || state.yolo.stillMs >= 900 || state.yolo.locked;
+  const anchor = locked && state.yolo.lockedReference ? state.yolo.lockedReference : previous;
+  if (!anchor) return selectBestVehicle(detections);
+
   let bestMatch = null;
   let bestMatchScore = 0;
 
   detections.forEach((detection) => {
-    const dx = detection.cx - previous.cx;
-    const dy = detection.cy - previous.cy;
+    const dx = detection.cx - anchor.cx;
+    const dy = detection.cy - anchor.cy;
     const centerDistance = Math.sqrt(dx * dx + dy * dy);
-    const overlap = boxIou(detection, previous);
-    const areaRatio = Math.min(detection.area, previous.area) / Math.max(detection.area, previous.area, 0.001);
-    const matchScore = overlap * 92 + Math.max(0, 1 - centerDistance / 0.16) * 48 + areaRatio * 24;
+    const overlap = boxIou(detection, anchor);
+    const areaRatio = Math.min(detection.area, anchor.area) / Math.max(detection.area, anchor.area, 0.001);
+    const maxDistance = locked ? 0.12 : 0.16;
+    const distanceScore = Math.max(0, 1 - centerDistance / maxDistance);
+    const jumpPenalty = locked && centerDistance > 0.12 && overlap < 0.1 ? 48 : 0;
+    const matchScore = overlap * 118 + distanceScore * 54 + areaRatio * 24 - jumpPenalty;
 
     if (matchScore > bestMatchScore) {
       bestMatchScore = matchScore;
@@ -1206,7 +1210,7 @@ function selectTrackedVehicle(detections) {
     }
   });
 
-  if (bestMatch && bestMatchScore >= (locked ? 34 : 46)) {
+  if (bestMatch && bestMatchScore >= (locked ? 58 : 46)) {
     return { ...bestMatch, trackedScore: bestMatchScore };
   }
 
@@ -1442,33 +1446,34 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
   const ownCarLooksStopped =
     metrics.globalMotion <= globalStopLimit &&
     lowerMotion <= lowerStopLimit;
+  const hasFreshYolo = Boolean(metrics.yolo && performance.now() - metrics.yolo.updatedAt <= YOLO_CONFIG.intervalMs * 4);
+  const yoloHasTrackedTarget = Boolean(metrics.yolo?.hasTarget);
+  const yoloLooksStopped =
+    hasFreshYolo &&
+    yoloHasTrackedTarget &&
+    Boolean(metrics.yolo?.stable) &&
+    metrics.yolo.stillMs >= 1200 &&
+    metrics.yolo.motion <= Math.max(18, tolerance + 8);
+  const yoloRequiresStableStop = state.yolo.ready && hasFreshYolo && yoloHasTrackedTarget;
   const stoppedByBaseline =
     hasBaseline &&
     ownCarLooksStopped &&
-    metrics.motion <= baselineMotion + tolerance * 1.05;
+    metrics.motion <= baselineMotion + tolerance * 1.05 &&
+    (!yoloRequiresStableStop || yoloLooksStopped);
   const stoppedBySharedShake =
     ownCarLooksStopped &&
-    mismatch <= tolerance * 1.05;
+    mismatch <= tolerance * 1.05 &&
+    (!yoloRequiresStableStop || yoloLooksStopped);
   const stoppedByYolo =
     ownCarLooksStopped &&
-    Boolean(metrics.yolo?.hasTarget) &&
-    Boolean(metrics.yolo?.stable) &&
-    metrics.yolo.stillMs >= 1500 &&
-    metrics.yolo.motion <= Math.max(18, tolerance + 8);
+    yoloLooksStopped;
   const isStopped = stoppedByBaseline || stoppedBySharedShake || stoppedByYolo;
   const pixelFrontMotion = Math.min(100, Math.round(relativeMotion * 1.45));
   const yoloMotion = metrics.yolo ? metrics.yolo.motion : 0;
-  const brakeOff = Boolean(
-    metrics.brake?.off &&
-      (state.yolo.locked || state.armed) &&
-      metrics.brake.baseline >= 18,
-  );
   const fastTargetMoved = Boolean(metrics.fastTarget?.moved && (state.yolo.locked || state.armed || state.stoppedSince));
   const fastTargetMotion = metrics.fastTarget ? metrics.fastTarget.motion : 0;
-  const frontMotion = Math.max(pixelFrontMotion, yoloMotion, fastTargetMotion, brakeOff ? 82 : 0);
-  const hasFreshYolo = Boolean(metrics.yolo && performance.now() - metrics.yolo.updatedAt <= YOLO_CONFIG.intervalMs * 4);
+  const frontMotion = Math.max(pixelFrontMotion, yoloMotion, fastTargetMotion);
   const yoloMoveThreshold = state.yolo.locked || state.armed ? 18 : Math.max(28, moveThreshold * 0.68);
-  const yoloHasTrackedTarget = Boolean(metrics.yolo?.hasTarget);
   const yoloMissingWithTargetMotion = Boolean(
     metrics.yolo?.moved &&
       !yoloHasTrackedTarget &&
@@ -1480,9 +1485,18 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
       fastTargetMotion >= 16 &&
       metrics.fastTarget?.activeCells >= 6,
   );
+  const yoloStrongReferenceMove = Boolean(
+    yoloHasTrackedTarget &&
+      (metrics.yolo?.referenceShift >= 0.045 ||
+        metrics.yolo?.referenceAreaChange >= 0.13 ||
+        metrics.yolo?.referenceOverlapChange >= 0.34 ||
+        metrics.yolo?.rawMotion >= 34),
+  );
   const yoloMoved = Boolean(
     metrics.yolo?.moved &&
-      (state.armed ? yoloTrackedWithTargetMotion || yoloMissingWithTargetMotion : yoloHasTrackedTarget) &&
+      (state.armed
+        ? yoloStrongReferenceMove || yoloTrackedWithTargetMotion || yoloMissingWithTargetMotion
+        : yoloHasTrackedTarget) &&
       (yoloMotion >= yoloMoveThreshold || (state.yolo.locked && metrics.yolo.rawMotion >= 24)),
   );
   const allowPixelFallback = !state.yolo.ready || (!state.armed && !state.yolo.locked);
@@ -1499,7 +1513,7 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
   return {
     stability,
     frontMotion,
-    frontCarMoved: brakeOff || fastTargetMoved || yoloMoved || pixelMoved,
+    frontCarMoved: fastTargetMoved || yoloMoved || pixelMoved,
     isStopped,
   };
 }
