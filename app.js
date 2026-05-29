@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.12.0";
+const APP_VERSION = "2.12.1";
 const DEBUG_ENABLED = new URLSearchParams(window.location.search).has("debug");
 
 const YOLO_CONFIG = {
@@ -1513,7 +1513,7 @@ function deriveMotionState(metrics, sensitivity, tolerance) {
   return {
     stability,
     frontMotion,
-    frontCarMoved: fastTargetMoved || yoloMoved || pixelMoved,
+    frontCarMoved: state.armed && (fastTargetMoved || yoloMoved || pixelMoved),
     isStopped,
   };
 }
@@ -1722,6 +1722,8 @@ function rgbToHue(r, g, b, max, delta) {
 }
 
 function triggerAlert(label, options = {}) {
+  if (label === "前車移動了" && !state.armed) return;
+
   const now = Date.now();
   if (now - state.lastAlertAt < 2600 && label !== "測試提醒") return;
   state.lastAlertAt = now;
