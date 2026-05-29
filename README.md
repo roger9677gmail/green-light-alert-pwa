@@ -36,3 +36,19 @@ python -m http.server 4173
 ```
 
 接著開啟 `http://localhost:4173`。
+
+## Web Codex 上線
+
+Web Codex 改版前先確認雲端 repo 與正式網站版本：
+
+```powershell
+node scripts/check-cloud-version.mjs
+```
+
+改版後用以下指令同步升版：
+
+```powershell
+node scripts/bump-version.mjs 2.12.2
+```
+
+完整流程請看 `WEB_CODEX.md`。Codex 專案指令請看 `AGENTS.md`。
