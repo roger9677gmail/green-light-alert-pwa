@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.12.1";
+const APP_VERSION = "2.12.2";
 const DEBUG_ENABLED = new URLSearchParams(window.location.search).has("debug");
 
 const YOLO_CONFIG = {
@@ -61,6 +61,11 @@ const state = {
   audioUnlocked: false,
   reloadingForUpdate: false,
   previousGray: null,
+  analysis: {
+    width: 0,
+    height: 0,
+    ctx: null,
+  },
   stoppedSince: 0,
   armed: false,
   demoStart: 0,
@@ -100,6 +105,8 @@ const state = {
     previousTarget: null,
     missingFrames: 0,
     inputCanvas: null,
+    inputCtx: null,
+    inputData: null,
     smoothMotion: 0,
     stableSince: 0,
     stillMs: 0,
@@ -504,9 +511,15 @@ function analyzeCamera(now = performance.now()) {
   const sampleWidth = 240;
   const sampleHeight = Math.round((sampleWidth / videoWidth) * videoHeight);
   const canvas = els.canvas;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  canvas.width = sampleWidth;
-  canvas.height = sampleHeight;
+  if (state.analysis.width !== sampleWidth || state.analysis.height !== sampleHeight) {
+    canvas.width = sampleWidth;
+    canvas.height = sampleHeight;
+    state.analysis.width = sampleWidth;
+    state.analysis.height = sampleHeight;
+    state.analysis.ctx = null;
+  }
+  const ctx = state.analysis.ctx || canvas.getContext("2d", { willReadFrequently: true });
+  state.analysis.ctx = ctx;
   ctx.drawImage(els.video, 0, 0, sampleWidth, sampleHeight);
 
   const roi = { x: 0, y: 0, w: sampleWidth, h: sampleHeight };
@@ -1060,10 +1073,13 @@ function createYoloInput() {
   const size = YOLO_CONFIG.inputSize;
   const canvas = state.yolo.inputCanvas || document.createElement("canvas");
   state.yolo.inputCanvas = canvas;
-  canvas.width = size;
-  canvas.height = size;
+  if (canvas.width !== size || canvas.height !== size) {
+    canvas.width = size;
+    canvas.height = size;
+  }
 
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const ctx = state.yolo.inputCtx || canvas.getContext("2d", { willReadFrequently: true });
+  state.yolo.inputCtx = ctx;
   const scale = Math.min(size / videoWidth, size / videoHeight);
   const drawWidth = Math.round(videoWidth * scale);
   const drawHeight = Math.round(videoHeight * scale);
@@ -1075,7 +1091,12 @@ function createYoloInput() {
   ctx.drawImage(els.video, 0, 0, videoWidth, videoHeight, padX, padY, drawWidth, drawHeight);
 
   const pixels = ctx.getImageData(0, 0, size, size).data;
-  const input = new Float32Array(3 * size * size);
+  const inputLength = 3 * size * size;
+  const input =
+    state.yolo.inputData && state.yolo.inputData.length === inputLength
+      ? state.yolo.inputData
+      : new Float32Array(inputLength);
+  state.yolo.inputData = input;
   const plane = size * size;
 
   for (let i = 0, p = 0; i < pixels.length; i += 4, p += 1) {
