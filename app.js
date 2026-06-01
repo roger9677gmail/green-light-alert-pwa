@@ -1,12 +1,11 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.12.4";
+const APP_VERSION = "2.12.1";
 const DEBUG_ENABLED = new URLSearchParams(window.location.search).has("debug");
 
 const YOLO_CONFIG = {
-  inputSize: 416,
-  intervalMs: 260,
-  maxIntervalMs: 900,
+  inputSize: 640,
+  intervalMs: 160,
   minConfidence: 0.28,
   modelUrl: "https://huggingface.co/webml/yolov8n/resolve/main/onnx/yolov8n.onnx",
   runtimePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/",
@@ -95,7 +94,6 @@ const state = {
     failed: false,
     inFlight: false,
     lastRunAt: 0,
-    dynamicIntervalMs: 260,
     latest: null,
     detections: [],
     target: null,
@@ -107,18 +105,6 @@ const state = {
     stillMs: 0,
     locked: false,
     lockedReference: null,
-    inputBuffer: null,
-    inputBufferSize: 0,
-  },
-  analysis: {
-    ctx: null,
-    width: 0,
-    height: 0,
-    grayA: null,
-    grayB: null,
-    useA: true,
-    lastRunAt: 0,
-    latest: null,
   },
   debug: {
     lastKey: "",
@@ -512,60 +498,31 @@ function analyzeCamera(now = performance.now()) {
   const videoHeight = els.video.videoHeight;
 
   if (!videoWidth || !videoHeight) {
-    return state.analysis.latest || { stability: 0, motion: 0, globalMotion: 0, lowerMotion: 0 };
+    return { stability: 0, motion: 0, globalMotion: 0, lowerMotion: 0 };
   }
+
+  const sampleWidth = 240;
+  const sampleHeight = Math.round((sampleWidth / videoWidth) * videoHeight);
+  const canvas = els.canvas;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  canvas.width = sampleWidth;
+  canvas.height = sampleHeight;
+  ctx.drawImage(els.video, 0, 0, sampleWidth, sampleHeight);
+
+  const roi = { x: 0, y: 0, w: sampleWidth, h: sampleHeight };
+
+  const frame = ctx.getImageData(0, 0, sampleWidth, sampleHeight).data;
+  const gray = toGray(frame, sampleWidth, sampleHeight);
+  const metrics = scoreMotion(gray, state.previousGray, sampleWidth, sampleHeight, roi);
+  const fastTarget = analyzeLockedTargetMotion(gray, state.previousGray, sampleWidth, sampleHeight, metrics, now);
+  const brake = analyzeBrakeLights(frame, sampleWidth, sampleHeight, now);
+  state.previousGray = gray;
 
   if (state.yolo.ready) {
     scheduleYoloFrame(now);
   }
 
-  const targetFrameMs = state.yolo.inFlight ? 120 : 80;
-  if (state.analysis.latest && now - state.analysis.lastRunAt < targetFrameMs) {
-    return mergeYoloMetrics(state.analysis.latest);
-  }
-
-  const sampleWidth = 200;
-  const sampleHeight = Math.round((sampleWidth / videoWidth) * videoHeight);
-  prepareAnalysisBuffers(sampleWidth, sampleHeight);
-
-  const canvas = els.canvas;
-  const ctx = state.analysis.ctx;
-  ctx.drawImage(els.video, 0, 0, sampleWidth, sampleHeight);
-
-  const roi = { x: 0, y: 0, w: sampleWidth, h: sampleHeight };
-  const frame = ctx.getImageData(0, 0, sampleWidth, sampleHeight).data;
-  const gray = nextGrayBuffer();
-  writeGray(frame, gray);
-  const metrics = scoreMotion(gray, state.previousGray, sampleWidth, sampleHeight, roi);
-  const fastTarget = analyzeLockedTargetMotion(gray, state.previousGray, sampleWidth, sampleHeight, metrics, now);
-  const brake = analyzeBrakeLights(frame, sampleWidth, sampleHeight, now);
-  state.previousGray = gray;
-  state.analysis.lastRunAt = now;
-  state.analysis.latest = { ...smoothMotionMetrics(metrics), brake, fastTarget };
-
-  return mergeYoloMetrics(state.analysis.latest);
-}
-
-function prepareAnalysisBuffers(width, height) {
-  const total = width * height;
-  if (state.analysis.width === width && state.analysis.height === height && state.analysis.grayA?.length === total) return;
-
-  const canvas = els.canvas;
-  canvas.width = width;
-  canvas.height = height;
-  state.analysis.ctx = canvas.getContext("2d", { willReadFrequently: true });
-  state.analysis.width = width;
-  state.analysis.height = height;
-  state.analysis.grayA = new Uint8Array(total);
-  state.analysis.grayB = new Uint8Array(total);
-  state.analysis.useA = true;
-  state.previousGray = null;
-}
-
-function nextGrayBuffer() {
-  const gray = state.analysis.useA ? state.analysis.grayA : state.analysis.grayB;
-  state.analysis.useA = !state.analysis.useA;
-  return gray;
+  return mergeYoloMetrics({ ...smoothMotionMetrics(metrics), brake, fastTarget });
 }
 
 function waitForVideoMetadata() {
@@ -629,7 +586,8 @@ function updateDemoVisual(moving = false) {
   els.demoLight.classList.toggle("moving", moving);
 }
 
-function writeGray(pixels, gray) {
+function toGray(pixels, width, height) {
+  const gray = new Uint8Array(width * height);
   for (let i = 0, p = 0; i < pixels.length; i += 4, p += 1) {
     gray[p] = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114;
   }
@@ -1067,21 +1025,16 @@ function waitForOrtRuntime() {
 
 function scheduleYoloFrame(now) {
   if (!state.yolo.session || state.yolo.inFlight) return;
-  const interval = state.yolo.dynamicIntervalMs || YOLO_CONFIG.intervalMs;
-  if (now - state.yolo.lastRunAt < interval) return;
+  if (now - state.yolo.lastRunAt < YOLO_CONFIG.intervalMs) return;
   if (!els.video.videoWidth || !els.video.videoHeight) return;
 
   state.yolo.lastRunAt = now;
   state.yolo.inFlight = true;
-  const startedAt = performance.now();
   runYoloFrame()
     .catch(() => {
       state.yolo.latest = null;
     })
     .finally(() => {
-      const elapsed = performance.now() - startedAt;
-      const targetInterval = Math.min(YOLO_CONFIG.maxIntervalMs, Math.max(YOLO_CONFIG.intervalMs, elapsed * 1.8));
-      state.yolo.dynamicIntervalMs = Math.round(state.yolo.dynamicIntervalMs * 0.65 + targetInterval * 0.35);
       state.yolo.inFlight = false;
     });
 }
@@ -1091,18 +1044,12 @@ async function runYoloFrame() {
   if (!frame) return;
 
   const inputName = state.yolo.session.inputNames[0];
-  let output = null;
-  try {
-    output = await state.yolo.session.run({ [inputName]: frame.tensor });
-    const outputName = state.yolo.session.outputNames[0];
-    const detections = parseYoloOutput(output[outputName], frame.meta);
-    const target = selectTrackedVehicle(detections);
-    renderYoloDetections(detections, target);
-    updateYoloMotion(target, detections.length);
-  } finally {
-    disposeOrtTensor(frame.tensor);
-    if (output) Object.values(output).forEach(disposeOrtTensor);
-  }
+  const output = await state.yolo.session.run({ [inputName]: frame.tensor });
+  const outputName = state.yolo.session.outputNames[0];
+  const detections = parseYoloOutput(output[outputName], frame.meta);
+  const target = selectTrackedVehicle(detections);
+  renderYoloDetections(detections, target);
+  updateYoloMotion(target, detections.length);
 }
 
 function createYoloInput() {
@@ -1128,8 +1075,8 @@ function createYoloInput() {
   ctx.drawImage(els.video, 0, 0, videoWidth, videoHeight, padX, padY, drawWidth, drawHeight);
 
   const pixels = ctx.getImageData(0, 0, size, size).data;
+  const input = new Float32Array(3 * size * size);
   const plane = size * size;
-  const input = getYoloInputBuffer(plane * 3);
 
   for (let i = 0, p = 0; i < pixels.length; i += 4, p += 1) {
     input[p] = pixels[i] / 255;
@@ -1141,20 +1088,6 @@ function createYoloInput() {
     tensor: new window.ort.Tensor("float32", input, [1, 3, size, size]),
     meta: { scale, padX, padY, videoWidth, videoHeight },
   };
-}
-
-function getYoloInputBuffer(length) {
-  if (!state.yolo.inputBuffer || state.yolo.inputBufferSize !== length) {
-    state.yolo.inputBuffer = new Float32Array(length);
-    state.yolo.inputBufferSize = length;
-  }
-  return state.yolo.inputBuffer;
-}
-
-function disposeOrtTensor(tensor) {
-  if (tensor && typeof tensor.dispose === "function") {
-    tensor.dispose();
-  }
 }
 
 function parseYoloOutput(output, meta) {
@@ -1623,7 +1556,6 @@ function resetMotionState() {
   resetBrakeLightState();
   resetFastTargetState();
   resetYoloTracking();
-  resetAnalysisBuffers();
   updateStopSeconds(0);
 }
 
@@ -1657,19 +1589,7 @@ function resetYoloTracking() {
   state.yolo.stillMs = 0;
   state.yolo.locked = false;
   state.yolo.lockedReference = null;
-  state.yolo.dynamicIntervalMs = YOLO_CONFIG.intervalMs;
   renderYoloDetections([]);
-}
-
-function resetAnalysisBuffers() {
-  state.analysis.ctx = null;
-  state.analysis.width = 0;
-  state.analysis.height = 0;
-  state.analysis.grayA = null;
-  state.analysis.grayB = null;
-  state.analysis.useA = true;
-  state.analysis.lastRunAt = 0;
-  state.analysis.latest = null;
 }
 
 function boxIou(a, b) {
@@ -1824,7 +1744,7 @@ function triggerAlert(label, options = {}) {
     }
   }
   if (els.notifyToggle.checked && Notification.permission === "granted") {
-    new Notification("前車提醒", { body: "前車可能已移動，請確認路況後再起步。" });
+    new Notification("綠燈提醒", { body: "可能已轉綠燈，請確認路況。" });
   }
 }
 
@@ -2135,57 +2055,40 @@ function warnIfCameraBlockedByHttp() {
 }
 
 function registerServiceWorker() {
-  if (!("serviceWorker" in navigator)) return;
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (state.reloadingForUpdate) return;
+      state.reloadingForUpdate = true;
+      setMessage("新版已載入，正在重新整理。");
+      window.location.reload();
+    });
 
-  navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (state.reloadingForUpdate) return;
-    state.reloadingForUpdate = true;
-    setMessage("新版已載入，正在重新整理。");
-    window.location.reload();
-  });
-
-  navigator.serviceWorker
-    .register(`./sw.js?v=${APP_VERSION}`, { updateViaCache: "none" })
-    .then((registration) => {
-      monitorServiceWorkerUpdates(registration);
-      requestServiceWorkerUpdate(registration);
-
-      document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") {
-          requestServiceWorkerUpdate(registration);
+    navigator.serviceWorker
+      .register(`./sw.js?v=${APP_VERSION}`)
+      .then((registration) => {
+        if (registration.waiting) {
+          activateUpdatedWorker(registration.waiting);
         }
+
+        registration.addEventListener("updatefound", () => {
+          const worker = registration.installing;
+          if (!worker) return;
+
+          worker.addEventListener("statechange", () => {
+            if (worker.state === "installed" && navigator.serviceWorker.controller) {
+              activateUpdatedWorker(worker);
+            }
+          });
+        });
+
+        if (navigator.onLine) {
+          registration.update();
+        }
+      })
+      .catch(() => {
+        setMessage("離線快取尚未啟用，但偵測功能仍可使用。");
       });
-      window.addEventListener("pageshow", () => requestServiceWorkerUpdate(registration));
-      window.addEventListener("online", () => requestServiceWorkerUpdate(registration));
-    })
-    .catch(() => {
-      setMessage("離線快取尚未啟用，但偵測功能仍可使用。");
-    });
-}
-
-function monitorServiceWorkerUpdates(registration) {
-  if (registration.waiting) {
-    activateUpdatedWorker(registration.waiting);
   }
-
-  registration.addEventListener("updatefound", () => {
-    const worker = registration.installing;
-    if (!worker) return;
-
-    worker.addEventListener("statechange", () => {
-      if (worker.state === "installed" && navigator.serviceWorker.controller) {
-        activateUpdatedWorker(worker);
-      }
-    });
-  });
-}
-
-function requestServiceWorkerUpdate(registration) {
-  if (!navigator.onLine) return;
-
-  registration.update().catch(() => {
-    // Keep the active app usable; the next foreground/online event will retry.
-  });
 }
 
 function activateUpdatedWorker(worker) {

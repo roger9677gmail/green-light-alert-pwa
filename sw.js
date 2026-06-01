@@ -1,9 +1,9 @@
-const CACHE_NAME = "front-car-alert-v2124";
+const CACHE_NAME = "front-car-alert-v2121";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=2.12.4",
-  "./app.js?v=2.12.4",
+  "./styles.css?v=2.12.1",
+  "./app.js?v=2.12.1",
   "./manifest.webmanifest",
   "./icon.svg",
   "./ads.txt",
@@ -34,21 +34,19 @@ self.addEventListener("message", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
-  event.respondWith(networkFirst(event.request));
+  event.respondWith(
+    fetch(event.request)
+      .then((response) => {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        return response;
+      })
+      .catch(() =>
+        caches.match(event.request).then((cached) => {
+          if (cached) return cached;
+          if (event.request.mode === "navigate") return caches.match("./index.html");
+          throw new Error("No cached response available");
+        }),
+      ),
+  );
 });
-
-async function networkFirst(request) {
-  const cache = await caches.open(CACHE_NAME);
-  const cacheKey = request.mode === "navigate" ? "./index.html" : request;
-
-  try {
-    const response = await fetch(new Request(request, { cache: "reload" }));
-    cache.put(cacheKey, response.clone());
-    return response;
-  } catch {
-    const cached = await cache.match(cacheKey);
-    if (cached) return cached;
-    if (request.mode === "navigate") return cache.match("./index.html");
-    throw new Error("No cached response available");
-  }
-}
