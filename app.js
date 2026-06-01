@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const APP_VERSION = "2.12.3";
+const APP_VERSION = "2.12.4";
 const DEBUG_ENABLED = new URLSearchParams(window.location.search).has("debug");
 
 const YOLO_CONFIG = {
