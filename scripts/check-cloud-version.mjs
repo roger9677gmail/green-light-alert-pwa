@@ -1,16 +1,6 @@
 const repo = "roger9677gmail/green-light-alert-pwa";
 const liveBase = "https://9677.fun";
-const rawBase = `https://raw.githubusercontent.com/${repo}/main`;
 const stamp = Date.now();
-
-const targets = [
-  ["GitHub main app.js", `${rawBase}/app.js?nocache=${stamp}`],
-  ["GitHub main index.html", `${rawBase}/index.html?nocache=${stamp}`],
-  ["GitHub main sw.js", `${rawBase}/sw.js?nocache=${stamp}`],
-  ["Live app.js", `${liveBase}/app.js?nocache=${stamp}`],
-  ["Live index.html", `${liveBase}/index.html?nocache=${stamp}`],
-  ["Live sw.js", `${liveBase}/sw.js?nocache=${stamp}`],
-];
 
 function extractVersion(label, text) {
   const appVersion = text.match(/APP_VERSION\s*=\s*"([^"]+)"/)?.[1];
@@ -28,6 +18,29 @@ async function fetchText(label, url) {
   return extractVersion(label, await response.text());
 }
 
+async function fetchMainSha() {
+  const response = await fetch(`https://api.github.com/repos/${repo}/commits/main?nocache=${stamp}`, {
+    cache: "no-store",
+    headers: { Accept: "application/vnd.github+json" },
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub commits API: HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  return data.sha;
+}
+
+const mainSha = await fetchMainSha();
+const rawBase = `https://raw.githubusercontent.com/${repo}/${mainSha}`;
+const targets = [
+  ["GitHub main app.js", `${rawBase}/app.js`],
+  ["GitHub main index.html", `${rawBase}/index.html`],
+  ["GitHub main sw.js", `${rawBase}/sw.js`],
+  ["Live app.js", `${liveBase}/app.js?nocache=${stamp}`],
+  ["Live index.html", `${liveBase}/index.html?nocache=${stamp}`],
+  ["Live sw.js", `${liveBase}/sw.js?nocache=${stamp}`],
+];
+
 const rows = [];
 for (const [label, url] of targets) {
   try {
@@ -38,6 +51,7 @@ for (const [label, url] of targets) {
 }
 
 console.table(rows);
+console.log(`GitHub main SHA: ${mainSha.slice(0, 7)}`);
 
 const githubApp = rows.find((row) => row.label === "GitHub main app.js")?.appVersion;
 const liveApp = rows.find((row) => row.label === "Live app.js")?.appVersion;
